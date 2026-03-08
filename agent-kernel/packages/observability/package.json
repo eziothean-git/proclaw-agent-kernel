@@ -1,0 +1,20 @@
+{
+  "name": "@agent-kernel/observability",
+  "version": "0.1.0",
+  "description": "Observability conventions - Trace/Log/Telemetry standards",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.7.0"
+  }
+}
