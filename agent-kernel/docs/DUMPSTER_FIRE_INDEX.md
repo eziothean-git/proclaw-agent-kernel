@@ -275,3 +275,237 @@
 ---
 
 *本评估基于代码快照静态分析，未运行实际服务验证。火焰指数仅供参考，不构成投资建议。* 🔥
+
+---
+
+---
+
+# 🔥 Dumpster Fire Index — Gateway V2.0 专项审计
+
+> **评估日期**: 2026-03-09  
+> **评估范围**: `agent-kernel/apps/gateway/` (V2.0 重构版)  
+> **评估基线**: `schema/schema.png`（架构图）+ `apps/gateway/ARCHITECTURE.md`  
+> **对比参考**: 上一版 PR 的 Gateway V1.0 评估（见本文档顶部 Layer 1 段落）  
+> **评估者**: copilot-swe-agent 代码审计
+
+---
+
+## 📌 背景说明
+
+Gateway 模块是 agent kernel 的**对外网关层**（schema 图左侧 `对外网关` 节点），在架构中承担：
+
+- **接入适配**：HTTP / CLI / WebSocket / QQ 等平台统一入口  
+- **IR 转换**：外部消息 → `InputMessage`（中间表示），`OutputMessage` → 平台格式  
+- **请求管理**：写入文件系统信箱 `inbox/`，作为与 Python Kernel 的异步边界  
+- **回调接收**：Kernel 处理完成后通过 `POST /gateway/webhook/kernel-response` 回写 `outbox/`  
+- **定时调度**：`定时请求调度器` 节点，通过 cron/timeout 向请求管理器注入计划任务  
+- **会话路由**：维护 userId → sessionId 映射，决策 create / reuse / queue  
+
+---
+
+## 📊 V2.0 综合评分
+
+| 维度 | V1.0 得分 | V2.0 得分 | 变化 | 说明 |
+|------|-----------|-----------|------|------|
+| **整体设计合理性** | 55% | **75%** | ▲+20% | 信箱架构落地，异步边界清晰 |
+| **关键管线完整性** | 40% | **70%** | ▲+30% | WebhookController 已实现（但原始未注册） |
+| **测试覆盖** | 0% | **62 tests** | ▲从无到有 | 5 个 spec 文件覆盖核心服务 |
+| **代码质量** | 60% | **72%** | ▲+12% | 减少了 stub 代码，但仍有残留缺陷 |
+| **安全性** | 20% | **28%** | ▲+8% | 修复路径遍历漏洞，但无认证 |
+| **架构符合度** | ~50% | **~80%** | ▲+30% | 完全匹配 schema 图的 Gateway 职责 |
+
+**V2.0 Gateway 综合**: **73%** — 🟡 (相比 V1.0 的 55% 有显著提升)
+
+---
+
+## 🗂️ V2.0 模块级评估表
+
+### ✅ 已激活模块（在 AppModule 注册）
+
+| 模块 | 完成度 | 🔥 指数 | 对应 Schema 节点 | 关键发现 |
+|------|--------|---------|-----------------|---------|
+| **GatewayController** | 92% | 🟢 | `对外网关` | 输入验证已补全（ValidationPipe）；健康检查无实际探针 |
+| **GatewayService** | 85% | 🟢 | `对外网关` | 信箱写入正确；`waitForResponse` 超时处理良好 |
+| **StorageService** | 90% | 🟢 | `请求管理器` | 原子写入正确；O(N) 索引扫描在大规模下有性能问题 |
+| **IRConverterService** | 75% | 🟡 | IR 转换层 | ⚠️ 严重：JSON Schema 用 snake_case，TS 接口用 camelCase，验证恒失败 |
+| **RouterService** | 82% | 🟢 | `对外网关` 路由 | 纯内存状态，重启丢失全部 session |
+| **WebhookController** | 80% | 🟢 | `对外网关` 回调入口 | **P0 已修复**：原始版本未注册进 Module，endpoint 返回 404 |
+| **SchedulerService** | 85% | 🟢 | `定时请求调度器` | **P0 已修复**：原始版本接入废弃的 RequestQueueService，任务静默丢弃 |
+| **CliAdapter** | 88% | 🟢 | 平台适配层 | stdin/stdout JSON 协议正确；`healthCheck()` 仅返回 isRunning |
+
+### ⚠️ 已声明但未激活的模块（未注册进 AppModule）
+
+| 模块 | 在 AppModule? | 对应 Schema 节点 | 影响 | 建议 |
+|------|--------------|-----------------|------|------|
+| **ExecutorModule** (MCP 工具执行) | ❌ 未注册 | `Agentic OS Interface Skill` | `POST /api/v1/executor/execute` 404 | 评估是否应在 Gateway 或仅 Python Kernel 端执行 |
+| **McpModule** (MCP 客户端池) | ❌ 未注册 | `Skill lib` 调用层 | MCP 连接无法建立 | ExecutorModule 激活时同步注册 |
+| **TelemetryModule** (OpenTelemetry) | ❌ 未注册 | 横切关注点 | 无任何链路追踪数据 | 应立即加入 AppModule |
+| **KernelModule** (Python Kernel HTTP 客户端) | ❌ 未注册 | Python Kernel 直调路径 | KernelService 无法被注入 | 由 ExecutorModule 按需引入 |
+| **RequestQueueModule** | ❌ 废弃 | — | 遗留代码混淆设计意图 | **建议删除** |
+
+---
+
+## 🔴 关键缺陷详细分析
+
+### P0 级（已在本次 PR 修复）
+
+| # | 缺陷 | 修复方式 | 验证 |
+|---|------|---------|------|
+| 1 | `WebhookController` 未注册 → `/gateway/webhook/kernel-response` 返回 404 | 添加至 `GatewayModule.controllers` | ✅ typecheck 通过 |
+| 2 | `SchedulerService` 注入废弃 `RequestQueueService` → 定时任务静默丢弃 | 改为注入 `GatewayService`，写入文件信箱 | ✅ typecheck 通过 |
+| 3 | `SchedulerModule` 未注册进 `AppModule` → 调度器永不启动 | 加入 `AppModule.imports` | ✅ typecheck 通过 |
+| 4 | `saveAttachment` 文件名仅过滤字符但未去除 `..` → 路径遍历安全漏洞 | 先 `path.basename()` 再字符过滤 | ✅ 测试验证 |
+| 5 | `executeWithKernel()` 是注释掉的 TODO stub | 接入 `KernelService.execute()` | ✅ typecheck 通过 |
+
+### P1 级（本次 PR 修复）
+
+| # | 缺陷 | 修复方式 |
+|---|------|---------|
+| 6 | `IRConverterService.loadSchemas()` 在构造函数中 fire-and-forget | 改为 `OnModuleInit.onModuleInit()` 中 `await` |
+| 7 | `getSessionStatus()` 使用内联 `require('path')` / `require('fs')` | 改为模块级 `import` |
+| 8 | `ChatRequestDto` 无字段验证，空 userId/message 可写入信箱 | 添加 `class-validator` 装饰器 + `ValidationPipe` |
+| 9 | `pollOutbox` 与 `saveResponseToOutbox` 可重复 emit 同一响应 | 添加 `emittedRequestIds` Set 去重 |
+
+### P1 级（本次 PR 未修复 — 需独立 PR）
+
+| # | 缺陷 | 影响 | 预估工作量 |
+|---|------|------|-----------|
+| 10 | **IR 字段名不匹配**：JSON Schema 用 `snake_case`（`device_id`, `user_id`），TypeScript 接口用 `camelCase`（`deviceId`, `userId`）→ AJV 验证恒失败，Python Kernel 读到的字段名与 schema 不符 | 数据交换协议不一致，Python Kernel 解析风险 | 1-2 天（需协调 Python 端） |
+| 11 | `RouterService` 会话纯内存存储，重启丢失所有 session | 生产环境重启后所有用户 session 失效 | 1-2 天（接入 Redis 或文件持久化） |
+| 12 | `StorageService.getResponseFromOutbox()` / `getRequestStatus()` O(N) 全量扫描 JSONL 索引 | 信箱文件增大后延迟线性增长 | 1 天（添加内存索引缓存或数据库） |
+| 13 | `WebhookController` 无认证 → 任何人可 POST 伪造内核响应 | 恶意响应可注入系统 | 4-8h（添加 HMAC 签名或 Bearer Token） |
+| 14 | `GatewayController.getHealth()` 始终返回 `storage: 'healthy'` 而不做实际检查 | 存储不可用时健康检查仍报 OK | 2h |
+
+### P2 级
+
+| # | 缺陷 | 说明 |
+|---|------|------|
+| 15 | `RouterService.generateSessionId()` 使用 `Date.now() + random`，非 UUIDv4 | 碰撞概率低但非标准 |
+| 16 | `ExecutorService` / `McpService` 职责边界模糊 | Schema 中 `Agentic OS Interface Skill` 在 Python Kernel 侧，不在 Gateway 侧 |
+| 17 | `RequestQueueService` 标记 `@deprecated` 但仍保留全量代码 | 迷惑性遗留代码，建议删除 |
+| 18 | `TelemetryModule` 已实现但未注册，OpenTelemetry 完全无效 | 可观测性归零 |
+| 19 | `StorageService` 无 `OnModuleDestroy` 清理，轮询器在测试中泄漏 | Jest 每次报 `force exit` 警告 |
+
+---
+
+## 🧪 测试质量分析
+
+| 测试文件 | 测试数 | 覆盖范围 | 质量评价 |
+|---------|--------|---------|---------|
+| `storage.service.spec.ts` | 16 | 初始化、信箱读写、附件、状态查询、事件、历史 | 🟢 全面 |
+| `ir-converter.service.spec.ts` | 10 | IR 转换、附件处理、平台编译、验证降级 | 🟢 全面 |
+| `router.service.spec.ts` | 12 | 三种路由决策、会话注册、状态切换 | 🟢 全面 |
+| `gateway.service.spec.ts` | 16 | 请求接受流程、超时、状态查询 | 🟢 全面 |
+| `webhook.controller.spec.ts` | 8 | 成功/失败/partial 状态、错误传播 | 🟢 全面 |
+| **合计** | **62** | — | — |
+
+**缺失测试**（待补充）：
+
+| 未覆盖的组件 | 原因 / 建议 |
+|------------|-----------|
+| `SchedulerService` | 需要 fake timers（`jest.useFakeTimers()`） |
+| `ExecutorService` 路径遍历防护 | `resolveAllowedPath` 是安全关键代码，应有专项测试 |
+| `CliAdapter` | 需要 stdin mock |
+| E2E 全链路（`handleChatRequest` → 写信箱 → webhook 回调 → `waitForResponse` 解析） | 需要临时文件系统 + 集成测试环境 |
+
+---
+
+## 🛡️ 安全评估（V2.0）
+
+| 安全维度 | V1.0 | V2.0 | 说明 |
+|---------|------|------|------|
+| **认证/授权** | 💀 0% | 💀 0% | 仍无 JWT / API Key |
+| **输入验证** | 🔴 30% | 🟡 65% | ChatRequestDto 已有长度+类型验证 |
+| **路径遍历防护** | 🟡 60% | 🟢 90% | **本次修复**：`saveAttachment` 使用 `path.basename()` |
+| **Webhook 认证** | 💀 0% | 💀 0% | 任何人可伪造内核回调 |
+| **速率限制** | 💀 0% | 💀 0% | 无限制 |
+| **CSRF** | 💀 0% | 💀 0% | POST 无 Token |
+| **LLM Prompt 注入防护** | 💀 0% | 💀 0% | 消息直传内核无消毒 |
+| **事件重放防护** | 💀 0% | 🟡 50% | **本次修复**：重复 emit 去重 |
+
+**安全总分**: **22/100** (+2) — 🔥🔥🔥🔥
+
+---
+
+## 📈 V2.0 Dumpster Fire 综合仪表盘
+
+```
+                        🔥 GATEWAY V2.0 DUMPSTER FIRE 指数 🔥
+
+    ┌──────────────────────────────────────────────────────────────────┐
+    │                                                                  │
+    │   认证/安全            ██░░░░░░░░░░░░░░░░░░░░░░░░░░░░  22%      │
+    │   测试覆盖 (上线前)    █████████░░░░░░░░░░░░░░░░░░░░░  35%      │
+    │   关键管线完整性       ████████████████████░░░░░░░░░░  70%      │
+    │   代码质量             ████████████████████░░░░░░░░░░  72%      │
+    │   整体设计合理性       █████████████████████░░░░░░░░░  75%      │
+    │   架构 schema 符合度   ████████████████████████░░░░░░  80%      │
+    │   IR 转换层完整性      ████████████████████████░░░░░░  82%      │
+    │   存储层稳健性         ████████████████████████░░░░░░  90%      │
+    │   文档完整性           ████████████████████████████░░  90%      │
+    │                                                                  │
+    └──────────────────────────────────────────────────────────────────┘
+
+    🔥 Gateway V2.0 Dumpster Fire 指数: 3.0 / 10
+       (10 = 废墟, 1 = 生产就绪)
+
+    判定: 🔥🔥🔥⬜⬜⬜⬜⬜⬜⬜
+          "火势受控，但 Webhook 认证和 IR 字段名是两颗未拆的雷"
+```
+
+---
+
+## 🎯 V2.0 → V2.1 优先灭火清单
+
+| 优先级 | 问题 | 影响 | 预估工作量 |
+|--------|------|------|-----------|
+| **P0** | IR 字段名 snake_case vs camelCase 不匹配 | Python Kernel 读写格式错误 | 1-2 天 |
+| **P0** | WebhookController 无认证 | 任意伪造 Kernel 回调 | 4-8h |
+| **P1** | RouterService session 无持久化 | 重启丢失所有路由状态 | 1-2 天 |
+| **P1** | TelemetryModule 未注册进 AppModule | 零可观测性 | 1h |
+| **P1** | 删除废弃 RequestQueueModule/Service | 减少迷惑性遗留代码 | 2h |
+| **P1** | ExecutorModule/McpModule 注册或重定位 | 消除孤儿模块 | 4h |
+| **P2** | StorageService O(N) 扫描改为内存索引 | 规模化性能保障 | 1 天 |
+| **P2** | `SchedulerService` 测试（fake timers） | 覆盖定时任务关键路径 | 4h |
+| **P2** | `ExecutorService.resolveAllowedPath` 安全测试 | 路径遍历防护验证 | 2h |
+| **P3** | `GatewayController.getHealth()` 真实探针 | 准确反映系统可用性 | 2h |
+
+---
+
+## 🧾 V2.0 最终判定
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                                                                    │
+│   模块状态:  "接近可集成的控制层"                                  │
+│                                                                    │
+│   已实现:   ✅ 文件系统信箱异步模式（inbox/outbox）                │
+│             ✅ Kernel 回调 Webhook（已修复注册问题）                │
+│             ✅ 多平台适配器接口（CLI 已实现）                       │
+│             ✅ 定时调度器接入网关信箱（已修复连接断裂）              │
+│             ✅ 完整 IR 转换层（含 JSON Schema 验证框架）            │
+│             ✅ 输入验证（class-validator）                          │
+│             ✅ 62 个单元测试覆盖核心服务                            │
+│                                                                    │
+│   关键未完成: ❌ IR wire format 字段名不一致（camelCase≠snake_case）│
+│              ❌ Webhook 无认证                                      │
+│              ❌ 零认证/授权（整体）                                 │
+│              ❌ Session 状态纯内存（重启归零）                       │
+│              ❌ 4 个模块孤儿（未注册进 AppModule）                  │
+│                                                                    │
+│   vs V1.0:   Gateway V1.0 (55%) → V2.0 (73%) ▲+18%               │
+│              V1.0 的 executeWithKernel stub → V2.0 已接入          │
+│              V1.0 的零测试 → V2.0 有 62 个测试                     │
+│              V1.0 的 WebhookController 缺失 → V2.0 已实现+注册     │
+│                                                                    │
+│   总分:      73/100 (vs V1.0: 55/100)                              │
+│   火焰等级:  🔥🔥🔥 (3.0/10)                                       │
+│   定性描述:  "设计意图明确，实现骨架健壮，但有两颗雷需要拆除"      │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+*V2.0 评估基于代码审计 + 静态分析，参考 schema/schema.png 架构图。评估日期 2026-03-09。* 🔥
+
