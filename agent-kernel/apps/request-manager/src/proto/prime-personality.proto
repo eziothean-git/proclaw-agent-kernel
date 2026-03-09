@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package primepersonality;
+
+import "google/protobuf/timestamp.proto";
+
+service PrimePersonality {
+  // 处理请求
+  rpc ProcessRequest (ProcessRequestRequest) returns (ProcessRequestResponse);
+  
+  // 健康检查
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// 处理状态
+enum ProcessingStatus {
+  PENDING = 0;
+  PROCESSING = 1;
+  COMPLETED = 2;
+  FAILED = 3;
+  CANCELLED = 4;
+}
+
+// 编译后的上下文
+message CompiledContext {
+  string task_goal = 1;
+  repeated string constraints = 2;
+  repeated string allowed_capabilities = 3;
+  bytes working_memory = 4;
+  map<string, string> context_metadata = 5;
+}
+
+// Action 执行结果
+message Action {
+  string type = 1;
+  string skill = 2;
+  string tool = 3;
+  string status = 4;  // success, failed, pending
+  int64 duration_ms = 5;
+  string result = 6;
+}
+
+// 处理指标
+message ProcessingMetrics {
+  int64 total_duration_ms = 1;
+  int32 token_count_input = 2;
+  int32 token_count_output = 3;
+  string model_version = 4;
+  int32 llm_calls_count = 5;
+}
+
+// 处理请求
+message ProcessRequestRequest {
+  string request_id = 1;
+  string session_id = 2;
+  string user_id = 3;
+  int32 priority = 4;  // 100, 50, 10, 0, -10
+  string body = 5;
+  CompiledContext context = 6;
+  map<string, string> metadata = 7;
+  int64 timeout_ms = 8;
+  google.protobuf.Timestamp deadline = 9;
+}
+
+message ProcessRequestResponse {
+  string request_id = 1;
+  ProcessingStatus status = 2;
+  string result_content = 3;
+  repeated Action actions = 4;
+  ProcessingMetrics metrics = 5;
+  
+  // 错误信息（仅失败时）
+  string error_category = 6;
+  string error_code = 7;
+  string error_message = 8;
+  bool recoverable = 9;
+}
+
+// 健康检查
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string version = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}

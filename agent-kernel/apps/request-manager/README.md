@@ -1,230 +1,252 @@
 # Request Manager（请求管理器）
 
-基于文件系统的信箱机制，与 Gateway 完全解耦的请求处理器。
+基于优先级的 TypeScript + gRPC 请求管理器，完全替换原有 Python 实现。
 
-## 架构位置
+## 特性
+
+- **多级优先级队列**: 支持 P0-P4 五级优先级（100, 50, 10, 0, -10）
+- **非抢占式调度**: 高优先级优先，但不中断正在执行的任务
+- **会话亲和性**: 同一会话请求串行执行，保证顺序
+- **并发控制**: 最大5个并发请求
+- **超时与重试**: 按优先级不同超时时间，指数退避重试（最多3次）
+- **全量持久化**: inbox + audit + state 三重持久化
+- **gRPC 全链路**: Gateway ↔ Request Manager ↔ Prime Personality
+- **Skill Hook**: Prime Personality 通过 Agentic OS Interface Skill 回调 Gateway
+
+## 技术栈
+
+- TypeScript 5.6+
+- NestJS 10
+- gRPC (@grpc/grpc-js)
+- Protocol Buffers
+
+## 架构
 
 ```
-┌──────────┐     ┌──────────┐     ┌─────────────────┐
-│  Gateway │────→│   Inbox  │────→│ Request Manager │
-│ (生产者) │     │ (信箱)   │     │ (消费者)        │
-└──────────┘     └──────────┘     └─────────────────┘
-                                        │
-                                        ↓
-                                   ┌──────────┐
-                                   │  Outbox  │────→ Gateway 推送
-                                   │ (信箱)   │
-                                   └──────────┘
+┌──────────┐   gRPC    ┌──────────────────────────────────────┐
+│ Gateway  │──────────→│         Request Manager              │
+│          │           │  ┌────────────────────────────────┐  │
+│          │           │  │  Inbox (持久化)                │  │
+│          │           │  │  Priority Queue (P0-P4)        │  │
+│          │           │  │  Worker Pool (Max 5)           │  │
+│          │           │  │  Session Affinity              │  │
+│          │           │  │  Retry/Timeout                 │  │
+│          │           │  │  Audit (全量记录)              │  │
+│          │           │  └────────────────────────────────┘  │
+└────┬─────┘           └──────────────────┬───────────────────┘
+     │                                      │
+     │ gRPC                                 │ gRPC
+     │                                      ↓
+     │                              ┌───────────────┐
+     │                              │ Prime         │
+     │                              │ Personality   │
+     │                              └───────┬───────┘
+     │                                      │
+     │         Agentic OS Interface Skill   │
+     │         (用户/自动化系统 Request)      │
+     │                                      ↓
+     │                              ┌───────────────┐
+     └──────────────────────────────│   Gateway     │
+        (Skill Hook 回调)            │  [写入outbox] │
+                                    │  [推送给用户]  │
+                                    └───────────────┘
 ```
 
-## 文件系统结构
+## 信息流
 
 ```
-/var/gateway/
-├── inbox/          # Gateway 写入，Request Manager 读取
-├── outbox/         # Request Manager 写入，Gateway 读取
-├── pending/        # 标记正在处理的请求
-└── ...
+1. Gateway 接收用户请求
+   ↓ gRPC SubmitRequest
+2. Request Manager 接收并持久化到 inbox
+   ↓ 
+3. 按优先级入队 (P0 > P1 > P2 > P3 > P4)
+   ↓
+4. Worker Pool 获取任务 (Max 5 并发)
+   ↓
+5. 检查 Session Affinity (同 session 串行)
+   ↓
+6. 调用 Prime Personality (gRPC，带超时)
+   ↓
+7. Prime Personality 处理完成
+   ↓ 通过 Agentic OS Interface Skill
+8. Gateway Skill Hook 接收响应
+   ↓
+9. Gateway 写入 outbox 并推送给用户
+   ↓ (可选回调)
+10. Request Manager 更新任务状态
 ```
 
-## 快速开始
-
-### 1. 启动 Gateway
+## 安装
 
 ```bash
-cd apps/gateway
+cd agent-kernel/apps/request-manager
 npm install
+```
+
+## 配置
+
+复制 `.env.example` 为 `.env` 并修改：
+
+```bash
+cp .env.example .env
+```
+
+关键配置项：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `REQUEST_MANAGER_GRPC_PORT` | gRPC 服务端口 | 50052 |
+| `MAX_CONCURRENT_REQUESTS` | 最大并发数 | 5 |
+| `MAX_QUEUE_SIZE` | 队列最大长度 | 1000 |
+| `TIMEOUT_P0_MS` | P0紧急请求超时 | 30000ms |
+| `TIMEOUT_P4_MS` | P4后台任务超时 | 300000ms |
+| `PRIME_PERSONALITY_GRPC_URL` | Prime Personality gRPC地址 | localhost:50051 |
+
+## 运行
+
+### 开发模式
+
+```bash
 npm run start:dev
 ```
 
-### 2. 启动 Request Manager（另一个终端）
+### 生产模式
 
 ```bash
-cd apps/request-manager
-python3 request_manager.py
+npm run build
+npm run start
 ```
 
-### 3. 发送测试请求
+## gRPC 接口
 
-```bash
-# 使用 curl
-curl -X POST http://localhost:3000/api/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "message": "Hello, how are you?",
-    "user_id": "user1",
-    "platform": "http"
-  }'
+### Gateway → Request Manager
 
-# 或使用 CLI
-echo '{"message": "Hello", "user_id": "user1"}' | npm run cli
-```
+定义在 `src/proto/request-manager.proto`
 
-### 4. 查询响应
-
-```bash
-# 使用返回的 request_id
-curl http://localhost:3000/api/v1/requests/{request_id}
-```
-
-## 工作原理
-
-### Gateway 端（TypeScript）
-
-1. 接收外部请求
-2. 转换为 Input IR
-3. 写入 `/var/gateway/inbox/{date}/{request_id}.json`
-4. 更新 `inbox/index.jsonl`
-5. 立即返回 `request_id`
-6. 轮询 `outbox/` 目录等待响应
-
-### Request Manager 端（Python）
-
-1. 轮询扫描 `inbox/` 目录
-2. 按优先级排序（高优先级优先）
-3. 串行处理请求
-4. 调用 Prime Personality（实际系统）
-5. 将响应写入 `/var/gateway/outbox/{date}/{request_id}.json`
-6. 更新 `outbox/index.jsonl`
-
-## 自定义 Request Manager
-
-你可以用任何语言实现请求管理器，只需要：
-
-1. **读取 inbox**：扫描 `/var/gateway/inbox/` 中的 `.json` 文件
-2. **处理请求**：调用你的 AI/Agent 系统
-3. **写入 outbox**：将响应写入 `/var/gateway/outbox/`
-
-### 最小实现示例
-
-```python
-import json
-from pathlib import Path
-
-INBOX = Path("/var/gateway/inbox")
-OUTBOX = Path("/var/gateway/outbox")
-
-# 读取请求
-for request_file in INBOX.glob("*/*.json"):
-    with open(request_file) as f:
-        request = json.load(f)
-    
-    request_id = request["header"]["request_id"]
-    
-    # 处理请求（你的逻辑）
-    response = process_with_your_ai(request)
-    
-    # 写入响应
-    response_file = OUTBOX / f"{request_id}.json"
-    with open(response_file, 'w') as f:
-        json.dump(response, f)
-```
-
-## 优先级系统
-
-支持 5 级优先级：
-
-- `P0` (100): 系统级紧急请求
-- `P1` (50): 定时请求（主人格留言）
-- `P2` (10): 高优先级用户请求
-- `P3` (0): 普通用户请求（默认）
-- `P4` (-10): 后台任务
-
-请求在 Input IR 的 `header.priority` 字段指定。
-
-## 与真实系统集成
-
-当前 `request_manager.py` 是模拟实现。在实际系统中，你需要替换 `process_request` 方法：
-
-```python
-async def process_request(self, request: Dict, file_path: Path) -> Dict:
-    # 1. 调用 Prime Personality
-    intent = await self.prime_personality.process(request)
-    
-    # 2. 路由到 Session Host
-    session = await self.get_or_create_session(intent.session_id)
-    result = await session.handle(intent)
-    
-    # 3. 返回响应
-    return {
-        "header": {...},
-        "status": "completed",
-        "body": result.content,
-    }
-```
-
-## 环境变量
-
-- `GATEWAY_STORAGE_PATH`: 文件系统根目录（默认: `/var/gateway`）
-- `REQUEST_MANAGER_POLL_INTERVAL`: 轮询间隔秒数（默认: 0.5）
-- `DEBUG`: 启用调试日志
-
-## 开发指南
-
-### 添加新的处理逻辑
-
-编辑 `request_manager.py` 中的 `process_request` 方法：
-
-```python
-async def process_request(self, request: Dict, file_path: Path) -> Dict:
-    # 你的自定义逻辑
-    if request["header"]["platform"] == "cli":
-        # CLI 特定处理
-        pass
-    
-    # 调用外部服务
-    result = await call_external_api(request)
-    
-    return {
-        "header": {...},
-        "status": "completed",
-        "body": result,
-    }
-```
-
-### 错误处理
-
-Request Manager 会自动捕获异常并写入错误响应：
-
-```json
-{
-  "status": "failed",
-  "error": {
-    "category": "system_error",
-    "message": "错误详情",
-    "recoverable": false
-  }
+```protobuf
+service RequestManager {
+  rpc SubmitRequest (SubmitRequestRequest) returns (SubmitRequestResponse);
+  rpc GetRequestStatus (GetRequestStatusRequest) returns (GetRequestStatusResponse);
+  rpc CancelRequest (CancelRequestRequest) returns (CancelRequestResponse);
+  rpc StreamRequestStatus (GetRequestStatusRequest) returns (stream StatusUpdate);
+  rpc GetQueueStatus (GetQueueStatusRequest) returns (GetQueueStatusResponse);
+  rpc GetWorkerStatus (GetWorkerStatusRequest) returns (GetWorkerStatusResponse);
+  rpc RetryRequest (RetryRequestRequest) returns (RetryRequestResponse);
 }
 ```
 
-## 故障排查
+### Request Manager → Prime Personality
 
-### Gateway 收不到响应
+定义在 `src/proto/prime-personality.proto`
 
-1. 检查 Request Manager 是否运行：`ps aux | grep request_manager`
-2. 检查 outbox 目录权限：`ls -la /var/gateway/outbox/`
-3. 检查日志：Request Manager 会输出处理日志
-
-### 请求积压
-
-如果 inbox 中文件堆积：
-
-1. 增加 Request Manager 实例（多进程）
-2. 优化处理速度
-3. 增加优先级区分
-
-### 文件系统权限
-
-确保 Gateway 和 Request Manager 都有读写权限：
-
-```bash
-sudo chown -R $USER:$USER /var/gateway
-chmod -R 755 /var/gateway
+```protobuf
+service PrimePersonality {
+  rpc ProcessRequest (ProcessRequestRequest) returns (ProcessRequestResponse);
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
 ```
 
-## 下一步
+## 优先级定义
 
-1. 实现真正的 Prime Personality 调用
-2. 添加 Session Host 集成
-3. 实现定时请求调度器
-4. 添加监控和指标收集
+| 优先级 | 数值 | 名称 | 说明 |
+|--------|------|------|------|
+| P0 | 100 | EMERGENCY | 系统级紧急请求 |
+| P1 | 50 | SCHEDULED | 定时请求（主人格留言） |
+| P2 | 10 | HIGH | 高优先级用户请求 |
+| P3 | 0 | NORMAL | 普通用户请求（默认） |
+| P4 | -10 | BACKGROUND | 后台任务 |
+
+## 持久化结构
+
+```
+/var/gateway/request-manager/
+├── inbox/                    # 请求持久化
+│   ├── {YYYY-MM-DD}/
+│   │   └── {request_id}.json
+│   └── index.jsonl
+├── audit/                    # 审计日志（全量记录）
+│   └── {YYYY-MM-DD}/
+│       └── audit.jsonl
+└── state/                    # 状态快照（可恢复）
+    ├── current.json
+    └── snapshot-{timestamp}.json
+```
+
+## 审计日志事件类型
+
+- `request_received`: 请求接收
+- `request_queued`: 请求入队
+- `request_started`: 开始处理
+- `prime_personality_called`: 调用主人格
+- `prime_personality_completed`: 主人格处理完成
+- `prime_personality_failed`: 主人格处理失败
+- `request_completed`: 请求完成
+- `request_failed`: 请求失败
+- `retry_scheduled`: 计划重试
+- `max_retries_exceeded`: 超过最大重试次数
+- `manual_retry`: 手动重试
+
+## 目录结构
+
+```
+src/
+├── constants/                # 常量定义
+│   └── index.ts
+├── exceptions/               # 自定义异常
+│   └── index.ts
+├── grpc/                     # gRPC 客户端和服务
+│   ├── prime-personality.client.ts
+│   ├── request-manager.server.ts
+│   └── proto/
+│       ├── prime-personality.proto
+│       └── request-manager.proto
+├── interfaces/               # TypeScript 接口
+│   └── index.ts
+├── services/                 # 核心服务
+│   ├── audit-logger.service.ts
+│   ├── persistence.service.ts
+│   ├── priority-queue.service.ts
+│   ├── priority-request-manager.service.ts
+│   ├── retry-handler.service.ts
+│   ├── session-affinity.service.ts
+│   └── worker-pool.service.ts
+├── request-manager.module.ts
+└── main.ts
+```
+
+## 开发
+
+### 生成 gRPC 代码（如需）
+
+```bash
+npm run proto:gen
+```
+
+### 代码检查
+
+```bash
+npm run lint
+npm run format
+```
+
+### 测试
+
+```bash
+npm run test
+npm run test:cov
+```
+
+## 与 Gateway 集成
+
+Request Manager 与 Gateway 通过 gRPC 通信：
+
+1. **Gateway** 通过 gRPC 提交请求给 Request Manager
+2. **Request Manager** 调度并调用 Prime Personality
+3. **Prime Personality** 通过 Skill Hook 回调 Gateway
+4. **Gateway** 接收响应并推送给用户
+
+两者通过 gRPC 紧密协作，但都保持独立运行。
+
+## License
+
+MIT
