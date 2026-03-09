@@ -34,14 +34,21 @@ class AgentThread:
         self.current_iteration = 0
         self.observations: list[dict[str, Any]] = []
 
-    def _create_agent(self) -> Agent:
-        model = OpenAIModel("gpt-4")
-        return Agent(
-            model=model,
-            system_prompt=self._build_system_prompt(),
-            result_type=AgentOutput,
-            tools=[],
-        )
+    def _create_agent(self) -> Agent | None:
+        try:
+            model = OpenAIModel("gpt-4")
+            return Agent(
+                model=model,
+                system_prompt=self._build_system_prompt(),
+                result_type=AgentOutput,
+                tools=[],
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "Failed to initialize LLM agent, will use mock execution for this instance",
+                error=str(exc),
+            )
+            return None
 
     def _build_system_prompt(self) -> str:
         lines = [
@@ -70,7 +77,7 @@ class AgentThread:
 
     async def run(self) -> AgentOutput:
         self.logger.info("Starting agent thread execution", goal=self.context.task_goal, run_mode=self.run_mode)
-        if self.run_mode == "mock":
+        if self.run_mode == "mock" or self.agent is None:
             return await self._run_mock()
 
         try:

@@ -3,15 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { IRConverterService } from '../core/ir-converter.service';
 import { StorageService, OutputMessage } from '../core/storage.service';
 import { RouterService } from '../router/router.service';
-
-interface ChatRequestDto {
-  sessionId?: string;
-  message: string;
-  userId: string;
-  platform?: string;
-  deviceId?: string;
-  metadata?: Record<string, unknown>;
-}
+import { ChatRequestDto } from './dto/chat-request.dto';
 
 interface ChatResponseDto {
   requestId: string;
