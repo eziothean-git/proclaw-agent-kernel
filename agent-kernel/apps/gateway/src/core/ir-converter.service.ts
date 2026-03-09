@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import Ajv from 'ajv';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -39,7 +39,7 @@ export interface ValidationResult {
 }
 
 @Injectable()
-export class IRConverterService {
+export class IRConverterService implements OnModuleInit {
   private readonly logger = new Logger(IRConverterService.name);
   private ajv: Ajv;
   private inputSchema: object | null = null;
@@ -47,7 +47,10 @@ export class IRConverterService {
 
   constructor(private readonly storageService: StorageService) {
     this.ajv = new Ajv({ allErrors: true });
-    this.loadSchemas();
+  }
+
+  async onModuleInit(): Promise<void> {
+    await this.loadSchemas();
   }
 
   private async loadSchemas(): Promise<void> {

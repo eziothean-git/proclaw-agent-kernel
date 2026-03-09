@@ -5,6 +5,7 @@ import { promises as fs } from 'fs';
 import { exec as execCallback } from 'child_process';
 import * as path from 'path';
 import { promisify } from 'util';
+import { KernelService } from '../kernel/kernel.service';
 
 const execAsync = promisify(execCallback);
 
@@ -28,6 +29,8 @@ interface PythonKernelRequest {
   session_id: string;
   user_id: string;
   message: string;
+  request_id: string;
+  callback_url?: string;
   context?: Record<string, unknown>;
 }
 
@@ -37,32 +40,26 @@ export class ExecutorService {
   private mcpClients = new Map<string, Client>();
   private activeExecutions = new Map<string, AbortController>();
   private readonly blockedCommands = ['rm -rf /', 'mkfs', 'dd if=/dev/zero', '>:', ':(){ :|: & };:'];
-  private pythonKernelUrl: string;
 
-  constructor() {
-    this.pythonKernelUrl = process.env.PYTHON_KERNEL_URL || 'http://localhost:8000';
-  }
+  constructor(private readonly kernelService: KernelService) {}
 
   /**
    * Execute a request through the Python Kernel
    */
   async executeWithKernel(request: PythonKernelRequest): Promise<unknown> {
-    this.logger.log(`Executing request ${request.session_id} via Python Kernel`);
-    
-    try {
-      // TODO: Implement HTTP call to Python Kernel
-      // const response = await fetch(`${this.pythonKernelUrl}/v1/execute`, {
-      //   method: 'POST',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify(request),
-      // });
-      
-      this.logger.log(`Request ${request.session_id} dispatched to kernel`);
-      return { status: 'dispatched', session_id: request.session_id };
-    } catch (error) {
-      this.logger.error(`Failed to execute with kernel: ${error.message}`);
-      throw error;
-    }
+    this.logger.log(`Executing request ${request.request_id} via Python Kernel`);
+
+    const response = await this.kernelService.execute({
+      session_id: request.session_id,
+      user_id: request.user_id,
+      message: request.message,
+      request_id: request.request_id,
+      callback_url: request.callback_url ?? '',
+      metadata: request.context,
+    });
+
+    this.logger.log(`Request ${request.request_id} dispatched to kernel with status: ${response.status}`);
+    return response;
   }
 
   /**

@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
 import { SchedulerService } from './scheduler.service';
-import { RequestQueueModule } from '../request-queue/request-queue.module';
+import { GatewayModule } from '../gateway/gateway.module';
 
 @Module({
-  imports: [RequestQueueModule],
+  imports: [GatewayModule],
   providers: [SchedulerService],
   exports: [SchedulerService],
 })

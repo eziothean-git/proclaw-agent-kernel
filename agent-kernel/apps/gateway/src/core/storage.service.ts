@@ -103,6 +103,7 @@ export class StorageService implements OnModuleInit {
   private readonly basePath: string;
   private readonly outboxEmitter = new EventEmitter();
   private watchedRequestIds = new Set<string>();
+  private emittedRequestIds = new Set<string>();
   private isWatching = false;
 
   constructor(private readonly configService: ConfigService) {
@@ -250,7 +251,8 @@ export class StorageService implements OnModuleInit {
       const indexPath = path.join(this.basePath, 'outbox', 'index.jsonl');
       await this.appendToIndex(indexPath, indexEntry as Record<string, unknown>);
 
-      // Emit event for watchers
+      // Emit event for watchers and mark as emitted to prevent duplicate from pollOutbox
+      this.emittedRequestIds.add(requestId);
       this.outboxEmitter.emit('response', response);
 
       this.logger.log(`Response saved to outbox: ${filePath}`);
@@ -313,9 +315,13 @@ export class StorageService implements OnModuleInit {
         try {
           const entry = JSON.parse(line);
 
-          // Check if this is a new response we're watching for
-          if (this.watchedRequestIds.has(entry.requestId)) {
+          // Check if this is a response we're watching for and haven't yet emitted
+          if (
+            this.watchedRequestIds.has(entry.requestId) &&
+            !this.emittedRequestIds.has(entry.requestId)
+          ) {
             this.watchedRequestIds.delete(entry.requestId);
+            this.emittedRequestIds.add(entry.requestId);
 
             // Read the response file
             const content = await fs.readFile(entry.path, 'utf-8');
@@ -359,7 +365,10 @@ export class StorageService implements OnModuleInit {
 
     await fs.mkdir(attachmentDir, { recursive: true });
 
-    const safeFileName = metadata.originalName.replace(/[^a-zA-Z0-9.-]/g, '_');
+    // Use only the basename (strips any path traversal sequences like ../) then
+    // further sanitize: keep alphanumerics, dots, hyphens, underscores only.
+    const baseName = path.basename(metadata.originalName);
+    const safeFileName = baseName.replace(/[^a-zA-Z0-9._-]/g, '_') || 'attachment';
     const filePath = path.join(attachmentDir, safeFileName);
 
     try {

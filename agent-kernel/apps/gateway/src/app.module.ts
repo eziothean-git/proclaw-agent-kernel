@@ -4,6 +4,7 @@ import { GatewayModule } from './gateway/gateway.module';
 import { RouterModule } from './router/router.module';
 import { CoreModule } from './core/core.module';
 import { CliModule } from './platform-adapters/cli/cli.module';
+import { SchedulerModule } from './scheduler/scheduler.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { CliModule } from './platform-adapters/cli/cli.module';
     GatewayModule,
     RouterModule,
     CliModule,
+    SchedulerModule,
   ],
 })
 export class AppModule {}

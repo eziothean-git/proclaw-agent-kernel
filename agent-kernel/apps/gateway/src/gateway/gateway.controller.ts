@@ -1,13 +1,40 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Controller, Get, Post, Body, Param, UsePipes, ValidationPipe } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiProperty } from '@nestjs/swagger';
+import { IsString, IsNotEmpty, IsOptional, MaxLength } from 'class-validator';
 import { GatewayService } from './gateway.service';
 
-interface ChatRequestDto {
+export class ChatRequestDto {
+  @ApiProperty({ description: 'Session ID (optional, new session created if not provided)', required: false })
+  @IsOptional()
+  @IsString()
   sessionId?: string;
+
+  @ApiProperty({ description: 'Message to send to the agent' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(32768)
   message: string;
+
+  @ApiProperty({ description: 'User identifier' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(256)
   userId: string;
+
+  @ApiProperty({ description: 'Platform identifier (e.g. http, cli, qq)', required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
   platform?: string;
+
+  @ApiProperty({ description: 'Device identifier', required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(256)
   deviceId?: string;
+
+  @ApiProperty({ description: 'Additional metadata', required: false })
+  @IsOptional()
   metadata?: Record<string, unknown>;
 }
 
@@ -21,6 +48,7 @@ interface ChatResponseDto {
 
 @ApiTags('gateway')
 @Controller('api/v1')
+@UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: false }))
 export class GatewayController {
   constructor(private readonly gatewayService: GatewayService) {}
 

@@ -1,4 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
+import * as path from 'path';
+import * as fsModule from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { IRConverterService } from '../core/ir-converter.service';
 import { StorageService, OutputMessage } from '../core/storage.service';
@@ -185,13 +187,13 @@ export class GatewayService {
 
     try {
       // Read inbox index
-      const inboxPath = require('path').join(
+      const inboxPath = path.join(
         process.env.GATEWAY_STORAGE_PATH || '/var/gateway',
         'inbox',
         'index.jsonl',
       );
-      const fs = require('fs').promises;
-      const inboxContent = await fs.readFile(inboxPath, 'utf-8');
+      const fsPromises = fsModule.promises;
+      const inboxContent = await fsPromises.readFile(inboxPath, 'utf-8');
       const inboxLines = inboxContent.split('\n').filter((line: string) => line.trim());
 
       for (const line of inboxLines) {
@@ -203,12 +205,12 @@ export class GatewayService {
       }
 
       // Read outbox index
-      const outboxPath = require('path').join(
+      const outboxPath = path.join(
         process.env.GATEWAY_STORAGE_PATH || '/var/gateway',
         'outbox',
         'index.jsonl',
       );
-      const outboxContent = await fs.readFile(outboxPath, 'utf-8');
+      const outboxContent = await fsPromises.readFile(outboxPath, 'utf-8');
       const outboxLines = outboxContent.split('\n').filter((line: string) => line.trim());
 
       for (const line of outboxLines) {
