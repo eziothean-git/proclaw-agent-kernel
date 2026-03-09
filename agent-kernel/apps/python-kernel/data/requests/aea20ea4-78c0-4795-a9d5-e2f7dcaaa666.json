@@ -1,0 +1,16 @@
+{
+  "id": "aea20ea4-78c0-4795-a9d5-e2f7dcaaa666",
+  "session_id": "sess_1773073927625_dvu56skpf",
+  "user_id": "unknown",
+  "message": "帮我列出当前目录的文件",
+  "status": "completed",
+  "created_at": "2026-03-09T16:32:08.022406",
+  "processed_at": "2026-03-09T16:32:08.022877",
+  "completed_at": "2026-03-09T16:32:08.024385",
+  "metadata": {
+    "platform": "test",
+    "device_id": "http-137821",
+    "source_ip": null,
+    "client_version": null
+  }
+}

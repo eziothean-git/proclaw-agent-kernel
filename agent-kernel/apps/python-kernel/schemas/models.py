@@ -29,8 +29,23 @@ class TaskStatus(str, Enum):
 
 class Request(BaseModel):
     """User request model."""
-    model_config = ConfigDict(strict=True)
-    
+    model_config = ConfigDict(
+        strict=False,
+        json_schema_extra={
+            "examples": [
+                {
+                    "id": "req_123",
+                    "session_id": "sess_123",
+                    "user_id": "user_123",
+                    "message": "Hello",
+                    "status": "pending",
+                    "created_at": "2024-01-01T00:00:00",
+                    "metadata": {},
+                }
+            ]
+        },
+    )
+
     id: str = Field(description="Unique request identifier")
     session_id: str = Field(description="Session identifier")
     user_id: str = Field(description="User identifier")
@@ -44,8 +59,8 @@ class Request(BaseModel):
 
 class Session(BaseModel):
     """Session state model."""
-    model_config = ConfigDict(strict=True)
-    
+    model_config = ConfigDict(strict=False)
+
     id: str = Field(description="Session identifier")
     user_id: str = Field(description="User identifier")
     status: str = Field(default="active", description="Session status")
@@ -58,8 +73,8 @@ class Session(BaseModel):
 
 class TaskSnapshot(BaseModel):
     """Task runtime snapshot model."""
-    model_config = ConfigDict(strict=True)
-    
+    model_config = ConfigDict(strict=False)
+
     id: str = Field(description="Task identifier")
     session_id: str = Field(description="Parent session ID")
     process_id: str = Field(description="Parent process ID")

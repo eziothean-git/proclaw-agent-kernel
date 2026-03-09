@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from context_compiler.master_compiler import get_master_compiler
+from inbox_watcher import get_inbox_watcher
 from personality.prime_personality import get_prime_personality
 from schemas.models import HealthCheck, Request, RequestStatus, Session
 from session_host.session_host import get_session_host
@@ -33,13 +34,26 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Python Kernel")
     memory_manager = get_memory_manager()
     await memory_manager.initialize()
+    
+    # Start scheduler
     scheduler = get_scheduler()
     scheduler_task = asyncio.create_task(scheduler.start())
+    
+    # Start inbox watcher (for Gateway mailbox integration)
+    inbox_watcher = get_inbox_watcher()
+    await inbox_watcher.start()
+    
     logger.info("Python Kernel ready")
     yield
+    
     logger.info("Shutting down Python Kernel")
+    await inbox_watcher.stop()
     await scheduler.stop()
     scheduler_task.cancel()
+    try:
+        await scheduler_task
+    except asyncio.CancelledError:
+        pass
     await memory_manager.close()
     await callback_client.aclose()
     logger.info("Python Kernel stopped")
@@ -139,16 +153,16 @@ async def process_request_async(request_id: str, callback_url: str):
         request.completed_at = datetime.utcnow()
         await memory_manager.save_request(request)
         
-        # Build output IR
+        # Build output IR (Gateway Webhook format)
         processing_time_ms = int((time.perf_counter() - started_at) * 1000)
         output_ir = {
+            "request_id": request.id,
+            "session_id": request.session_id,
+            "status": result["status"],
             "header": {
-                "request_id": request.id,
-                "session_id": request.session_id,
                 "timestamp": datetime.utcnow().isoformat(),
                 "processing_time_ms": processing_time_ms,
             },
-            "status": result["status"],
             "body": result.get("output", ""),
             "metadata": {
                 "actions": result.get("actions", []),
@@ -158,7 +172,9 @@ async def process_request_async(request_id: str, callback_url: str):
         if result["status"] != "completed":
             output_ir["error"] = {
                 "category": result.get("error_category", "unknown"),
+                "code": result.get("error_code", "INTERNAL_ERROR"),
                 "message": result.get("error", "Unknown error"),
+                "stack_trace": result.get("stack_trace"),
                 "recoverable": result.get("recoverable", False),
             }
         
