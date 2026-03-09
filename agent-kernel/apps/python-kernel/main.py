@@ -210,19 +210,43 @@ async def process_request_async(request_id: str, callback_url: str):
         })
 
 
-async def send_callback(callback_url: str, payload: dict):
-    """发送回调到 Gateway"""
-    try:
-        response = await callback_client.post(callback_url, json=payload)
-        if response.status_code >= 400:
-            logger.error("Callback failed", 
-                        url=callback_url, 
-                        status=response.status_code,
-                        response=response.text)
-        else:
-            logger.debug("Callback sent successfully", url=callback_url)
-    except Exception as e:
-        logger.error("Failed to send callback", url=callback_url, error=str(e))
+async def send_callback(callback_url: str, payload: dict, max_retries: int = 3):
+    """发送回调到 Gateway，失败时按指数退避重试"""
+    last_error: Exception | None = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = await callback_client.post(callback_url, json=payload)
+            if response.status_code >= 400:
+                logger.error(
+                    "Callback returned error status",
+                    url=callback_url,
+                    status=response.status_code,
+                    response=response.text,
+                    attempt=attempt,
+                )
+                last_error = Exception(f"Callback HTTP {response.status_code}")
+            else:
+                logger.debug("Callback sent successfully", url=callback_url, attempt=attempt)
+                return
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                "Failed to send callback, will retry",
+                url=callback_url,
+                error=str(e),
+                attempt=attempt,
+                max_retries=max_retries,
+            )
+
+        if attempt < max_retries:
+            await asyncio.sleep(2 ** (attempt - 1))  # 1s, 2s, 4s exponential backoff
+
+    logger.error(
+        "Callback failed after all retries",
+        url=callback_url,
+        error=str(last_error),
+        max_retries=max_retries,
+    )
 
 
 @app.post("/v1/execute")

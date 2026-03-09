@@ -1,15 +1,7 @@
 import { Controller, Get, Post, Body, Param } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { GatewayService } from './gateway.service';
-
-interface ChatRequestDto {
-  sessionId?: string;
-  message: string;
-  userId: string;
-  platform?: string;
-  deviceId?: string;
-  metadata?: Record<string, unknown>;
-}
+import { ChatRequestDto } from './dto/chat-request.dto';
 
 interface ChatResponseDto {
   requestId: string;

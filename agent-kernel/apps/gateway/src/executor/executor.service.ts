@@ -48,18 +48,44 @@ export class ExecutorService {
    */
   async executeWithKernel(request: PythonKernelRequest): Promise<unknown> {
     this.logger.log(`Executing request ${request.session_id} via Python Kernel`);
-    
+
+    const url = `${this.pythonKernelUrl}/v1/execute`;
+    const abortController = new AbortController();
+    const timeoutMs = 30000;
+    const timeoutHandle = setTimeout(() => abortController.abort(), timeoutMs);
+
     try {
-      // TODO: Implement HTTP call to Python Kernel
-      // const response = await fetch(`${this.pythonKernelUrl}/v1/execute`, {
-      //   method: 'POST',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify(request),
-      // });
-      
-      this.logger.log(`Request ${request.session_id} dispatched to kernel`);
-      return { status: 'dispatched', session_id: request.session_id };
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+        signal: abortController.signal,
+      });
+
+      clearTimeout(timeoutHandle);
+
+      if (!response.ok) {
+        const errorBody = await response.text().catch(() => '');
+        this.logger.error(
+          `Python Kernel error for session ${request.session_id}: HTTP ${response.status}`,
+          { sessionId: request.session_id, status: response.status, body: errorBody },
+        );
+        throw new Error(`Python Kernel returned HTTP ${response.status}: ${errorBody}`);
+      }
+
+      const result = await response.json();
+      this.logger.log(`Request ${request.session_id} dispatched to kernel, status: ${result?.status}`);
+      return result;
     } catch (error) {
+      clearTimeout(timeoutHandle);
+      if (error.name === 'AbortError') {
+        this.logger.error(`Request ${request.session_id} timed out after ${timeoutMs}ms`);
+        throw new Error(`Kernel request timed out after ${timeoutMs}ms`);
+      }
+      if ((error as NodeJS.ErrnoException).code === 'ECONNREFUSED') {
+        this.logger.error(`Python Kernel unavailable at ${this.pythonKernelUrl}`);
+        throw new Error('Python Kernel unavailable');
+      }
       this.logger.error(`Failed to execute with kernel: ${error.message}`);
       throw error;
     }

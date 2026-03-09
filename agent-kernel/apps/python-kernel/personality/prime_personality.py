@@ -45,13 +45,20 @@ class PrimePersonality:
         self.run_mode = os.environ.get("KERNEL_RUN_MODE", "real")
         self.agent = self._create_agent() if self.run_mode == "real" else None
 
-    def _create_agent(self) -> Agent:
-        model = OpenAIModel(self.config.model_name)
-        return Agent(
-            model=model,
-            system_prompt=self.config.system_prompt,
-            result_type=IntermediateRepresentation,
-        )
+    def _create_agent(self) -> Agent | None:
+        try:
+            model = OpenAIModel(self.config.model_name)
+            return Agent(
+                model=model,
+                system_prompt=self.config.system_prompt,
+                result_type=IntermediateRepresentation,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to initialize LLM agent, will use mock mode for this instance",
+                error=str(exc),
+            )
+            return None
 
     async def process_request(
         self,
@@ -65,7 +72,7 @@ class PrimePersonality:
             run_mode=self.run_mode,
         )
 
-        if self.run_mode == "mock":
+        if self.run_mode == "mock" or self.agent is None:
             return self._build_mock_ir(request)
 
         context = self._build_context(request, session_context)
