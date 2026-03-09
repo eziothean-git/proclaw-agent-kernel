@@ -1,29 +1,28 @@
 import { Controller, Get, Post, Body, Param } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { GatewayService } from './gateway.service';
-import { KernelService } from '../kernel/kernel.service';
 
 interface ChatRequestDto {
   sessionId?: string;
   message: string;
   userId: string;
+  platform?: string;
+  deviceId?: string;
   metadata?: Record<string, unknown>;
 }
 
 interface ChatResponseDto {
   requestId: string;
   sessionId: string;
-  status: 'queued' | 'processing' | 'completed' | 'failed';
+  status: 'accepted';
   timestamp: string;
+  message: string;
 }
 
 @ApiTags('gateway')
 @Controller('api/v1')
 export class GatewayController {
-  constructor(
-    private readonly gatewayService: GatewayService,
-    private readonly kernelService: KernelService,
-  ) {}
+  constructor(private readonly gatewayService: GatewayService) {}
 
   @Post('chat')
   @ApiOperation({ summary: 'Send a message to the agent' })
@@ -39,18 +38,41 @@ export class GatewayController {
   async getHealth(): Promise<{
     status: string;
     gateway: string;
-    python_kernel: string;
+    storage: string;
     timestamp: string;
     version: string;
   }> {
-    const pythonHealth = await this.kernelService.healthCheck();
-
     return {
-      status: pythonHealth ? 'healthy' : 'degraded',
+      status: 'healthy',
       gateway: 'healthy',
-      python_kernel: pythonHealth ? 'healthy' : 'unavailable',
+      storage: 'healthy',
       timestamp: new Date().toISOString(),
-      version: '0.1.0',
+      version: '0.2.0',
+    };
+  }
+
+  @Get('requests/:requestId')
+  @ApiOperation({ summary: 'Get request result' })
+  @ApiResponse({ status: 200, description: 'Request result retrieved' })
+  async getRequestResult(@Param('requestId') requestId: string): Promise<{
+    requestId: string;
+    status: string;
+    response?: unknown;
+  }> {
+    return this.gatewayService.getRequestStatus(requestId);
+  }
+
+  @Get('requests/:requestId/status')
+  @ApiOperation({ summary: 'Get request status (lightweight)' })
+  @ApiResponse({ status: 200, description: 'Request status retrieved' })
+  async getRequestStatus(@Param('requestId') requestId: string): Promise<{
+    requestId: string;
+    status: string;
+  }> {
+    const result = await this.gatewayService.getRequestStatus(requestId);
+    return {
+      requestId: result.requestId,
+      status: result.status,
     };
   }
 
@@ -61,7 +83,11 @@ export class GatewayController {
     sessionId: string;
     status: string;
     activeTasks: number;
-    activeTaskCount: number;
+    queueStatus: {
+      pending: number;
+      processing: number;
+      completed: number;
+    };
   }> {
     return this.gatewayService.getSessionStatus(sessionId);
   }

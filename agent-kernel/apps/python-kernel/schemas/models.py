@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, ConfigDict
 class RequestStatus(str, Enum):
     """Status of a user request."""
     PENDING = "pending"
+    QUEUED = "queued"
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"

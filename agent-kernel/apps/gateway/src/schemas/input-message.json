@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://agent.kernel/schemas/input-message.json",
+  "title": "InputMessage",
+  "description": "Gateway 输出的内部中间表示（输入消息）",
+  "type": "object",
+  "required": ["header", "body"],
+  "additionalProperties": false,
+  "properties": {
+    "header": {
+      "type": "object",
+      "required": ["timestamp", "platform", "device_id", "user_id"],
+      "additionalProperties": true,
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "消息接收时间（ISO 8601）"
+        },
+        "platform": {
+          "type": "string",
+          "enum": ["cli", "http", "websocket", "qq"],
+          "description": "接入平台类型"
+        },
+        "device_id": {
+          "type": "string",
+          "description": "设备/客户端标识"
+        },
+        "user_id": {
+          "type": "string",
+          "description": "用户唯一标识"
+        },
+        "session_id": {
+          "type": "string",
+          "description": "会话ID（可选，新建会话时为空）"
+        },
+        "request_id": {
+          "type": "string",
+          "description": "请求唯一ID（Gateway生成）"
+        },
+        "source_ip": {
+          "type": "string",
+          "description": "客户端IP（审计用）"
+        },
+        "client_version": {
+          "type": "string",
+          "description": "客户端版本"
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "attachments": {
+          "type": "array",
+          "description": "附件列表",
+          "items": {
+            "type": "object",
+            "required": ["index", "local_path", "mime_type"],
+            "additionalProperties": true,
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "正文中占位符索引（如 [attachment:0]）"
+              },
+              "local_path": {
+                "type": "string",
+                "description": "文件系统绝对路径"
+              },
+              "original_name": {
+                "type": "string",
+                "description": "原始文件名"
+              },
+              "mime_type": {
+                "type": "string",
+                "description": "MIME类型"
+              },
+              "size_bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "文件大小"
+              },
+              "checksum": {
+                "type": "string",
+                "description": "SHA256校验和（完整性审计）"
+              }
+            }
+          }
+        },
+        "tags": {
+          "type": "array",
+          "description": "用户/系统标签",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "body": {
+      "type": "string",
+      "description": "纯文本正文（附件使用占位符）",
+      "examples": [
+        "请分析这张图片 [attachment:0] 并提供摘要",
+        "你好，请帮我写一个Python函数"
+      ]
+    }
+  }
+}

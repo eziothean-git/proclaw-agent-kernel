@@ -1,14 +1,18 @@
 {
   "name": "@agent-kernel/gateway",
-  "version": "0.1.0",
-  "description": "Agent Kernel Gateway - TypeScript control layer",
+  "version": "0.2.0",
+  "description": "Agent Kernel Gateway - TypeScript control layer with filesystem mailbox",
   "private": true,
+  "bin": {
+    "gateway-cli": "./bin/cli.js"
+  },
   "scripts": {
     "build": "nest build",
     "dev": "nest start --watch",
     "start": "nest start",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
+    "cli": "ENABLE_CLI_ADAPTER=true node bin/cli.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
@@ -27,6 +31,7 @@
     "@opentelemetry/auto-instrumentations-node": "^0.40.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.46.0",
     "@opentelemetry/sdk-node": "^0.46.0",
+    "ajv": "^8.12.0",
     "axios": "^1.13.6",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.0",

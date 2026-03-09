@@ -1,25 +1,17 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { GatewayModule } from './gateway/gateway.module';
-import { RequestQueueModule } from './request-queue/request-queue.module';
-import { SchedulerModule } from './scheduler/scheduler.module';
-import { ExecutorModule } from './executor/executor.module';
 import { RouterModule } from './router/router.module';
-import { McpModule } from './mcp/mcp.module';
-import { TelemetryModule } from './telemetry/telemetry.module';
-import { KernelModule } from './kernel/kernel.module';
+import { CoreModule } from './core/core.module';
+import { CliModule } from './platform-adapters/cli/cli.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    TelemetryModule,
-    KernelModule,
+    CoreModule,
     GatewayModule,
-    RequestQueueModule,
-    SchedulerModule,
-    ExecutorModule,
     RouterModule,
-    McpModule,
+    CliModule,
   ],
 })
 export class AppModule {}

@@ -4,12 +4,14 @@ Agent Kernel Python Intelligence Layer.
 import asyncio
 import os
 import time
+import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime
 from uuid import uuid4
 
+import httpx
 import structlog
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
@@ -21,6 +23,9 @@ from storage.runtime_store import get_memory_manager
 from thread_runtime.scheduler import get_scheduler
 
 logger = structlog.get_logger()
+
+# HTTP client for callbacks
+callback_client = httpx.AsyncClient(timeout=60.0)
 
 
 @asynccontextmanager
@@ -36,6 +41,7 @@ async def lifespan(app: FastAPI):
     await scheduler.stop()
     scheduler_task.cancel()
     await memory_manager.close()
+    await callback_client.aclose()
     logger.info("Python Kernel stopped")
 
 
@@ -70,47 +76,44 @@ async def health_check():
     )
 
 
-@app.post("/v1/execute")
-async def execute_request(request_data: dict):
-    request: Request | None = None
+async def process_request_async(request_id: str, callback_url: str):
+    """异步处理请求并在完成后回调 Gateway"""
     started_at = time.perf_counter()
     memory_manager = get_memory_manager()
-
+    request: Request | None = None
+    
     try:
-        request = Request(
-            id=request_data.get("request_id", str(uuid4())),
-            session_id=request_data.get("session_id", str(uuid4())),
-            user_id=request_data["user_id"],
-            message=request_data["message"],
-            metadata=request_data.get("metadata", {}),
-        )
-        logger.info("Received execution request", request_id=request.id, session_id=request.session_id, user_id=request.user_id)
-
+        # Load request from storage
+        request = await memory_manager.get_request(request_id)
+        if not request:
+            logger.error("Request not found", request_id=request_id)
+            await send_callback(callback_url, {
+                "request_id": request_id,
+                "status": "failed",
+                "error": {
+                    "category": "system_error",
+                    "message": "Request not found in storage",
+                    "recoverable": False,
+                }
+            })
+            return
+        
+        # Get or create session
         session = await memory_manager.get_session(request.session_id)
         if not session:
             session = Session(id=request.session_id, user_id=request.user_id)
             await memory_manager.save_session(session)
-
+        
+        # Update status to processing
         request.status = RequestStatus.PROCESSING
         request.processed_at = datetime.utcnow()
         await memory_manager.save_request(request)
-        await memory_manager.save_event(
-            request.session_id,
-            {
-                "timestamp": datetime.utcnow().isoformat(),
-                "session_id": request.session_id,
-                "request_id": request.id,
-                "phase": "request_received",
-                "actor": "python_kernel",
-                "summary": request.message,
-                "status": "processing",
-            },
-        )
-
+        
+        # Compile context
         recent_events = await memory_manager.get_recent_events(request.session_id, limit=20)
         recent_snapshots = await memory_manager.get_recent_snapshots(request.session_id, limit=2)
         recent_tasks = [task.model_dump(mode='json') for task in await memory_manager.get_session_tasks(request.session_id)][:5]
-
+        
         master_context = get_master_compiler().compile(
             request=request,
             session=session,
@@ -121,36 +124,139 @@ async def execute_request(request_data: dict):
                 "request_metadata": request.metadata,
             },
         )
-        await memory_manager.save_event(
-            request.session_id,
-            {
-                "timestamp": datetime.utcnow().isoformat(),
-                "session_id": request.session_id,
-                "request_id": request.id,
-                "phase": "context_compiled",
-                "actor": "master_compiler",
-                "summary": "Master context compiled",
-                "status": "completed",
-            },
+        
+        # Prime Personality processing
+        intermediate_repr = await get_prime_personality().process_request(
+            request=request, 
+            session_context=master_context
         )
-
-        intermediate_repr = await get_prime_personality().process_request(request=request, session_context=master_context)
-        await memory_manager.save_event(
-            request.session_id,
-            {
-                "timestamp": datetime.utcnow().isoformat(),
-                "session_id": request.session_id,
-                "request_id": request.id,
-                "phase": "ir_generated",
-                "actor": "prime_personality",
-                "summary": intermediate_repr.intent,
-                "status": "completed",
-            },
-        )
-
+        
+        # Session Host execution
         result = await get_session_host(session).handle_request(request, intermediate_repr)
+        
+        # Update request status
         request.status = RequestStatus.COMPLETED if result["status"] == "completed" else RequestStatus.FAILED
         request.completed_at = datetime.utcnow()
+        await memory_manager.save_request(request)
+        
+        # Build output IR
+        processing_time_ms = int((time.perf_counter() - started_at) * 1000)
+        output_ir = {
+            "header": {
+                "request_id": request.id,
+                "session_id": request.session_id,
+                "timestamp": datetime.utcnow().isoformat(),
+                "processing_time_ms": processing_time_ms,
+            },
+            "status": result["status"],
+            "body": result.get("output", ""),
+            "metadata": {
+                "actions": result.get("actions", []),
+            },
+        }
+        
+        if result["status"] != "completed":
+            output_ir["error"] = {
+                "category": result.get("error_category", "unknown"),
+                "message": result.get("error", "Unknown error"),
+                "recoverable": result.get("recoverable", False),
+            }
+        
+        # Send callback
+        await send_callback(callback_url, output_ir)
+        logger.info("Request completed and callback sent", 
+                   request_id=request_id, 
+                   status=result["status"],
+                   processing_time_ms=processing_time_ms)
+        
+    except Exception as e:
+        logger.error("Request processing failed", 
+                    request_id=request_id, 
+                    error=str(e),
+                    traceback=traceback.format_exc())
+        
+        if request:
+            request.status = RequestStatus.FAILED
+            request.completed_at = datetime.utcnow()
+            await memory_manager.save_request(request)
+        
+        # Send error callback
+        await send_callback(callback_url, {
+            "request_id": request_id,
+            "status": "failed",
+            "error": {
+                "category": "system_error",
+                "code": "INTERNAL_ERROR",
+                "message": str(e),
+                "stack_trace": traceback.format_exc(),
+                "recoverable": False,
+            }
+        })
+
+
+async def send_callback(callback_url: str, payload: dict):
+    """发送回调到 Gateway"""
+    try:
+        response = await callback_client.post(callback_url, json=payload)
+        if response.status_code >= 400:
+            logger.error("Callback failed", 
+                        url=callback_url, 
+                        status=response.status_code,
+                        response=response.text)
+        else:
+            logger.debug("Callback sent successfully", url=callback_url)
+    except Exception as e:
+        logger.error("Failed to send callback", url=callback_url, error=str(e))
+
+
+@app.post("/v1/execute")
+async def execute_request(request_data: dict, background_tasks: BackgroundTasks):
+    """
+    接收请求并立即返回 request_id，后台异步处理完成后通过 callback 通知 Gateway
+    
+    Expected request_data:
+    {
+        "request_id": "uuid",
+        "session_id": "uuid",
+        "user_id": "user123",
+        "message": "用户消息",
+        "metadata": {...},
+        "callback_url": "http://gateway:3000/gateway/webhook/kernel-response"
+    }
+    """
+    memory_manager = get_memory_manager()
+    
+    try:
+        request_id = request_data.get("request_id", str(uuid4()))
+        session_id = request_data.get("session_id", str(uuid4()))
+        callback_url = request_data.get("callback_url")
+        
+        if not callback_url:
+            raise HTTPException(status_code=400, detail="callback_url is required")
+        
+        # Create request object
+        request = Request(
+            id=request_id,
+            session_id=session_id,
+            user_id=request_data["user_id"],
+            message=request_data["message"],
+            metadata=request_data.get("metadata", {}),
+        )
+        
+        logger.info("Received execution request", 
+                   request_id=request.id, 
+                   session_id=request.session_id, 
+                   user_id=request.user_id,
+                   callback_url=callback_url)
+        
+        # Create session if not exists
+        session = await memory_manager.get_session(request.session_id)
+        if not session:
+            session = Session(id=request.session_id, user_id=request.user_id)
+            await memory_manager.save_session(session)
+        
+        # Save request as pending
+        request.status = RequestStatus.PENDING
         await memory_manager.save_request(request)
         await memory_manager.save_event(
             request.session_id,
@@ -158,39 +264,27 @@ async def execute_request(request_data: dict):
                 "timestamp": datetime.utcnow().isoformat(),
                 "session_id": request.session_id,
                 "request_id": request.id,
-                "phase": "request_completed" if result["status"] == "completed" else "request_failed",
+                "phase": "request_queued",
                 "actor": "python_kernel",
                 "summary": request.message,
-                "status": result["status"],
+                "status": "pending",
             },
         )
-
+        
+        # Start background processing
+        background_tasks.add_task(process_request_async, request_id, callback_url)
+        
         return {
-            "request_id": request.id,
-            "session_id": request.session_id,
-            "status": result["status"],
-            "result": result,
-            "task_ids": result["task_ids"],
-            "processing_time_ms": int((time.perf_counter() - started_at) * 1000),
+            "request_id": request_id,
+            "session_id": session_id,
+            "status": "queued",
+            "message": "Request queued for processing",
         }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error("Request execution failed", error=str(e))
-        if request is not None:
-            request.status = RequestStatus.FAILED
-            request.completed_at = datetime.utcnow()
-            await memory_manager.save_request(request)
-            await memory_manager.save_event(
-                request.session_id,
-                {
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "session_id": request.session_id,
-                    "request_id": request.id,
-                    "phase": "request_failed",
-                    "actor": "python_kernel",
-                    "summary": str(e),
-                    "status": "failed",
-                },
-            )
+        logger.error("Failed to queue request", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
