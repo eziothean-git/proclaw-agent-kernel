@@ -164,7 +164,7 @@ class TestProcessContextCompilerIntegration:
         sample_session_context,
         sample_task_snapshots,
     ):
-        """Test compiler agent execution."
+        """Test compiler agent execution."""
         agent = ProcessContextCompilerAgent(
             target_task_id="task_target",
             process_definition=sample_process_definition,

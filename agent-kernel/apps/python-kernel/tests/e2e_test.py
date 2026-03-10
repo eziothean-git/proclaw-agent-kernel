@@ -12,7 +12,7 @@ This test verifies:
 Usage:
     # Test with Ark (Volcengine) - DEFAULT
     export ARK_API_KEY="your-ark-key"
-    export ARK_MODEL="glm-4-7-251222"  # or doubao-1-5-pro-32k-250115
+    export ARK_MODEL="doubao-seed-2-0-mini-260215"  # 更便宜的模型
     python tests/e2e_test.py
     
     # Test with OpenAI
@@ -34,7 +34,7 @@ os.environ["KERNEL_RUN_MODE"] = "real"  # Use real LLM
 if not os.environ.get("LLM_PROVIDER"):
     os.environ["LLM_PROVIDER"] = "ark"
 if not os.environ.get("ARK_MODEL"):
-    os.environ["ARK_MODEL"] = "glm-4-7-251222"
+    os.environ["ARK_MODEL"] = "doubao-seed-2-0-mini-260215"
 
 import structlog
 structlog.configure(
@@ -309,7 +309,7 @@ async def main():
     provider = os.environ.get("LLM_PROVIDER", "ark")
     if provider == "ark":
         api_key = os.environ.get("ARK_API_KEY")
-        model = os.environ.get("ARK_MODEL", "glm-4-7-251222")
+        model = os.environ.get("ARK_MODEL", "doubao-seed-2-0-mini-260215")
         if not api_key:
             print("⚠ Warning: ARK_API_KEY not set!")
             print("   Set it with: export ARK_API_KEY=\"your-ark-api-key\"\n")

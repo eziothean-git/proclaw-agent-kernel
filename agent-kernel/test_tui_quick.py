@@ -5,8 +5,8 @@ import sys
 
 sys.path.insert(0, '/home/eziothean/ProClaw/agent-kernel/apps/gateway/clients/tui')
 
-from openclaw_tui.client.gateway_client import GatewayClient
-from openclaw_tui.client.events import ConnectionState
+from proclaw_tui.client.gateway_client import GatewayClient
+from proclaw_tui.client.events import ConnectionState
 
 async def test_connection():
     """Test basic connection to Gateway."""

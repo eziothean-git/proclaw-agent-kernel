@@ -134,13 +134,22 @@ class PrimePersonality:
                     "security_level": "low",
                 }]
             
+            # Handle context_hints - ensure it's a dict (cheaper models may return list)
+            context_hints = result_data.get("context_hints", {})
+            if isinstance(context_hints, list):
+                # Convert list to dict with indexed keys
+                context_hints = {f"hint_{i}": str(item) for i, item in enumerate(context_hints)}
+            elif not isinstance(context_hints, dict):
+                # Wrap non-dict, non-list values
+                context_hints = {"value": str(context_hints)}
+            
             # Create IntermediateRepresentation
             ir = IntermediateRepresentation(
                 request_id=request.id,
                 intent=result_data.get("intent", "execute"),
                 goals=result_data.get("goals", []),
                 processes=processes,
-                context_hints=result_data.get("context_hints", {}),
+                context_hints=context_hints,
             )
             
             logger.info(

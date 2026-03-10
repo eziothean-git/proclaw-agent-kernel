@@ -13,6 +13,25 @@ import { RequestStateService } from '../services/request-state.service';
 import { QueueFullException, RequestNotFoundException } from '../exceptions';
 import { PRIORITY_LEVELS } from '../constants';
 
+/**
+ * Ensure value is a Date object.
+ * Handles cases where Date was serialized to string (e.g., from storage).
+ */
+function ensureDate(value: Date | string | undefined): Date | undefined {
+  if (!value) {
+    return undefined;
+  }
+  if (value instanceof Date) {
+    return value;
+  }
+  // Handle ISO string or other date string formats
+  if (typeof value === 'string') {
+    const parsed = new Date(value);
+    return isNaN(parsed.getTime()) ? undefined : parsed;
+  }
+  return undefined;
+}
+
 @Injectable()
 export class RequestManagerGrpcServer implements OnModuleInit {
   private readonly logger = new Logger(RequestManagerGrpcServer.name);
@@ -192,19 +211,25 @@ export class RequestManagerGrpcServer implements OnModuleInit {
     }
 
     const now = Date.now();
-    const waitTimeMs = task.startedAt 
-      ? task.startedAt.getTime() - task.createdAt.getTime()
-      : now - task.createdAt.getTime();
-    const processingTimeMs = task.startedAt 
-      ? (task.completedAt?.getTime() || now) - task.startedAt.getTime()
+    
+    // Ensure dates are Date objects (they may be strings when loaded from storage)
+    const startedAt = ensureDate(task.startedAt);
+    const createdAt = ensureDate(task.createdAt);
+    const completedAt = ensureDate(task.completedAt);
+    
+    const waitTimeMs = startedAt && createdAt
+      ? startedAt.getTime() - createdAt.getTime()
+      : now - (createdAt?.getTime() || now);
+    const processingTimeMs = startedAt 
+      ? (completedAt?.getTime() || now) - startedAt.getTime()
       : 0;
 
     // Convert Date objects to protobuf Timestamp format
-    const startedAtProto = task.startedAt
-      ? { seconds: Math.floor(task.startedAt.getTime() / 1000).toString(), nanos: (task.startedAt.getTime() % 1000) * 1000000 }
+    const startedAtProto = startedAt
+      ? { seconds: Math.floor(startedAt.getTime() / 1000).toString(), nanos: (startedAt.getTime() % 1000) * 1000000 }
       : undefined;
-    const completedAtProto = task.completedAt
-      ? { seconds: Math.floor(task.completedAt.getTime() / 1000).toString(), nanos: (task.completedAt.getTime() % 1000) * 1000000 }
+    const completedAtProto = completedAt
+      ? { seconds: Math.floor(completedAt.getTime() / 1000).toString(), nanos: (completedAt.getTime() % 1000) * 1000000 }
       : undefined;
 
     callback(null, {

@@ -10,7 +10,7 @@ echo "========================================"
 # 环境变量
 export ARK_API_KEY="${ARK_API_KEY:-62663763-1f8a-4c10-862e-b5d760b19fba}"
 export LLM_PROVIDER="ark"
-export ARK_MODEL="glm-4-7-251222"
+export ARK_MODEL="doubao-seed-2-0-mini-260215"
 export DATA_PATH="/home/eziothean/ProClaw/agent-kernel/data"
 export GATEWAY_STORAGE_PATH="/home/eziothean/ProClaw/agent-kernel/data/gateway"
 export GATEWAY_URL="http://localhost:3000"

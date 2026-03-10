@@ -11,6 +11,25 @@ import { RequestTask, ProcessResult } from '../interfaces';
 import { GrpcError, TimeoutException } from '../exceptions';
 import { PRIORITY_NAMES } from '../constants';
 
+/**
+ * Ensure value is a Date object.
+ * Handles cases where Date was serialized to string (e.g., from storage).
+ */
+function ensureDate(value: Date | string | undefined): Date | undefined {
+  if (!value) {
+    return undefined;
+  }
+  if (value instanceof Date) {
+    return value;
+  }
+  // Handle ISO string or other date string formats
+  if (typeof value === 'string') {
+    const parsed = new Date(value);
+    return isNaN(parsed.getTime()) ? undefined : parsed;
+  }
+  return undefined;
+}
+
 @Injectable()
 export class PriorityRequestManagerService implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(PriorityRequestManagerService.name);
@@ -121,8 +140,12 @@ export class PriorityRequestManagerService implements OnModuleInit, OnApplicatio
     });
 
     // 记录成功 - 防御性日期检查
-    const startedAtMs = task.startedAt?.getTime();
-    const createdAtMs = task.createdAt?.getTime();
+    // Ensure dates are Date objects (they may be strings when loaded from storage)
+    const startedAt = ensureDate(task.startedAt);
+    const createdAt = ensureDate(task.createdAt);
+    
+    const startedAtMs = startedAt?.getTime();
+    const createdAtMs = createdAt?.getTime();
     
     // Validate dates are valid numbers
     const processingDurationMs = (startedAtMs && !isNaN(startedAtMs))
@@ -188,14 +211,18 @@ export class PriorityRequestManagerService implements OnModuleInit, OnApplicatio
 
   private async saveStateSnapshot(): Promise<void> {
     // 获取所有请求的快照
-    const requests = this.requestState.getAll().map(task => ({
-      requestId: task.requestId,
-      status: task.status,
-      priority: task.priority,
-      sessionId: task.sessionId,
-      createdAt: task.createdAt.toISOString(),
-      retryCount: task.retryCount,
-    }));
+    // Ensure createdAt is a Date before calling toISOString()
+    const requests = this.requestState.getAll().map(task => {
+      const createdAt = ensureDate(task.createdAt);
+      return {
+        requestId: task.requestId,
+        status: task.status,
+        priority: task.priority,
+        sessionId: task.sessionId,
+        createdAt: createdAt ? createdAt.toISOString() : new Date().toISOString(),
+        retryCount: task.retryCount,
+      };
+    });
 
     await this.persistenceService.saveStateSnapshot({
       timestamp: new Date().toISOString(),

@@ -72,7 +72,7 @@ class ProClawApp(App):
     def __init__(
         self,
         gateway_url: str = "http://localhost:3000",
-        user_id: str = "openclaw-user",
+        user_id: str = "proclaw-user",
         **kwargs,
     ):
         super().__init__(**kwargs)

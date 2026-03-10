@@ -1,9 +1,11 @@
 """
 Storage Adapter - unified runtime persistence for file and SQLite backends.
 """
+import asyncio
 import json
 import os
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Optional
@@ -122,30 +124,53 @@ class StorageAdapter(ABC):
 class FileStorageAdapter(StorageAdapter):
     def __init__(self, base_path: str = "./data"):
         self.base_path = Path(base_path)
+        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="storage-")
         self._ensure_directories()
 
     def _ensure_directories(self):
         for dir_name in ['sessions', 'requests', 'tasks', 'snapshots', 'events', 'queue', 'scheduler']:
             (self.base_path / dir_name).mkdir(parents=True, exist_ok=True)
 
-    def _write_json(self, path: Path, data: dict):
+    def _write_json_sync(self, path: Path, data: dict):
+        """Synchronous JSON write (runs in thread pool)"""
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False, default=str)
 
-    def _read_json(self, path: Path) -> Optional[dict]:
+    def _read_json_sync(self, path: Path) -> Optional[dict]:
+        """Synchronous JSON read (runs in thread pool)"""
         if not path.exists():
             return None
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
 
+    async def _write_json(self, path: Path, data: dict):
+        """Asynchronous JSON write using thread pool"""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(self._executor, self._write_json_sync, path, data)
+
+    async def _read_json(self, path: Path) -> Optional[dict]:
+        """Asynchronous JSON read using thread pool"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(self._executor, self._read_json_sync, path)
+
     async def save_session(self, session: dict) -> None:
-        self._write_json(self.base_path / 'sessions' / f"{session['id']}.json", session)
+        await self._write_json(self.base_path / 'sessions' / f"{session['id']}.json", session)
 
     async def get_session(self, session_id: str) -> Optional[dict]:
-        return self._read_json(self.base_path / 'sessions' / f"{session_id}.json")
+        return await self._read_json(self.base_path / 'sessions' / f"{session_id}.json")
+
+    def _list_sessions_sync(self) -> List[dict]:
+        """Synchronous list sessions (runs in thread pool)"""
+        sessions: List[dict] = []
+        for file_path in (self.base_path / 'sessions').glob('*.json'):
+            data = self._read_json_sync(file_path)
+            if data:
+                sessions.append(data)
+        return sessions
 
     async def list_sessions(self) -> List[dict]:
-        return [self._read_json(file_path) for file_path in (self.base_path / 'sessions').glob('*.json') if self._read_json(file_path)]
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(self._executor, self._list_sessions_sync)
 
     async def update_session(self, session_id: str, updates: dict) -> None:
         session = await self.get_session(session_id)
@@ -154,29 +179,29 @@ class FileStorageAdapter(StorageAdapter):
             await self.save_session(session)
 
     async def save_request(self, request: dict) -> None:
-        self._write_json(self.base_path / 'requests' / f"{request['id']}.json", request)
+        await self._write_json(self.base_path / 'requests' / f"{request['id']}.json", request)
 
     async def get_request(self, request_id: str) -> Optional[dict]:
-        return self._read_json(self.base_path / 'requests' / f"{request_id}.json")
+        return await self._read_json(self.base_path / 'requests' / f"{request_id}.json")
 
     async def list_requests_by_session(self, session_id: str) -> List[dict]:
         requests: List[dict] = []
         for file_path in (self.base_path / 'requests').glob('*.json'):
-            request = self._read_json(file_path)
+            request = self._read_json_sync(file_path)
             if request and request.get('session_id') == session_id:
                 requests.append(request)
         return sorted(requests, key=lambda item: item.get('created_at', ''), reverse=True)
 
     async def save_task(self, task: dict) -> None:
-        self._write_json(self.base_path / 'tasks' / f"{task['id']}.json", task)
+        await self._write_json(self.base_path / 'tasks' / f"{task['id']}.json", task)
 
     async def get_task(self, task_id: str) -> Optional[dict]:
-        return self._read_json(self.base_path / 'tasks' / f"{task_id}.json")
+        return await self._read_json(self.base_path / 'tasks' / f"{task_id}.json")
 
     async def list_tasks_by_session(self, session_id: str) -> List[dict]:
         tasks: List[dict] = []
         for file_path in (self.base_path / 'tasks').glob('*.json'):
-            task = self._read_json(file_path)
+            task = self._read_json_sync(file_path)
             if task and task.get('session_id') == session_id:
                 tasks.append(task)
         return sorted(tasks, key=lambda item: item.get('created_at', ''), reverse=True)
@@ -188,22 +213,26 @@ class FileStorageAdapter(StorageAdapter):
             await self.save_task(task)
 
     async def save_snapshot(self, snapshot: dict) -> None:
-        self._write_json(self.base_path / 'snapshots' / f"{snapshot['id']}.json", snapshot)
+        await self._write_json(self.base_path / 'snapshots' / f"{snapshot['id']}.json", snapshot)
 
     async def get_snapshot(self, snapshot_id: str) -> Optional[dict]:
-        return self._read_json(self.base_path / 'snapshots' / f"{snapshot_id}.json")
+        return await self._read_json(self.base_path / 'snapshots' / f"{snapshot_id}.json")
 
     async def get_latest_snapshot(self, session_id: str) -> Optional[dict]:
         snapshots = await self.list_snapshots_by_session(session_id)
         return snapshots[0] if snapshots else None
 
-    async def list_snapshots_by_session(self, session_id: str) -> List[dict]:
+    def _list_snapshots_sync(self, session_id: str) -> List[dict]:
         snapshots: List[dict] = []
         for file_path in (self.base_path / 'snapshots').glob('*.json'):
-            snapshot = self._read_json(file_path)
+            snapshot = self._read_json_sync(file_path)
             if snapshot and snapshot.get('session_id') == session_id:
                 snapshots.append(snapshot)
         return sorted(snapshots, key=lambda item: item.get('timestamp', ''), reverse=True)
+
+    async def list_snapshots_by_session(self, session_id: str) -> List[dict]:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(self._executor, self._list_snapshots_sync, session_id)
 
     async def append_event(self, session_id: str, event: dict) -> None:
         event_file = self.base_path / 'events' / f"{session_id}.jsonl"
@@ -258,12 +287,12 @@ class FileStorageAdapter(StorageAdapter):
             return sum(1 for line in f if json.loads(line).get('status') == 'pending')
 
     async def schedule_task(self, task: dict) -> None:
-        self._write_json(self.base_path / 'scheduler' / f"{task['id']}.json", task)
+        await self._write_json(self.base_path / 'scheduler' / f"{task['id']}.json", task)
 
     async def get_due_tasks(self, before: datetime) -> List[dict]:
         tasks: List[dict] = []
         for file_path in (self.base_path / 'scheduler').glob('*.json'):
-            task = self._read_json(file_path)
+            task = self._read_json_sync(file_path)
             if task and task.get('status') == 'scheduled':
                 trigger_at = datetime.fromisoformat(task['trigger_at'])
                 if trigger_at <= before:

@@ -120,6 +120,16 @@ export class WorkerPoolService {
       return { success: true, result };
 
     } catch (error) {
+      // 更新任务状态为失败
+      task.status = 4; // FAILED
+      task.errorMessage = (error as Error).message;
+      task.completedAt = new Date();
+      this.totalFailed++;
+      
+      this.logger.error(
+        `Request ${task.requestId} failed: ${(error as Error).message}`
+      );
+      
       return { success: false, error: error as Error };
     } finally {
       await this.releaseSlot(task.requestId);

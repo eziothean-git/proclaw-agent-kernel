@@ -67,3 +67,9 @@ tmp/
 *.pid
 *.seed
 *.pid.lock
+
+# Runtime data directories
+agent-kernel/data/
+agent-kernel/apps/python-kernel/data/
+!agent-kernel/data/.gitkeep
+!agent-kernel/apps/python-kernel/data/.gitkeep

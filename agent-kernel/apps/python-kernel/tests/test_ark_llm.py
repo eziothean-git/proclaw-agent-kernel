@@ -18,7 +18,7 @@ if not os.environ.get("ARK_API_KEY"):
 if not os.environ.get("ARK_BASE_URL"):
     os.environ["ARK_BASE_URL"] = "https://ark.cn-beijing.volces.com/api/v3"
 if not os.environ.get("ARK_MODEL"):
-    os.environ["ARK_MODEL"] = "glm-4-7-251222"  # 使用实际可用的模型
+    os.environ["ARK_MODEL"] = "doubao-seed-2-0-mini-260215"  # 使用更便宜的模型
 
 import structlog
 structlog.configure(

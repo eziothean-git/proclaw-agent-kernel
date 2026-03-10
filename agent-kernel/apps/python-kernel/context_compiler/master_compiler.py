@@ -71,7 +71,7 @@ class MasterContextCompiler:
             complexity_threshold=self.config.complexity_threshold,
         )
     
-    def compile(
+    async def compile(
         self,
         request: Request,
         session: Session,
@@ -131,18 +131,8 @@ class MasterContextCompiler:
                     max_steps=self.config.max_steps,
                 )
                 
-                # Run agent - handle both sync and async contexts
-                try:
-                    # Try to get current event loop
-                    loop = asyncio.get_running_loop()
-                    # We're in an async context, use run_coroutine_threadsafe or create_task
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as pool:
-                        future = pool.submit(asyncio.run, agent.run())
-                        patch = future.result()
-                except RuntimeError:
-                    # No running loop, use asyncio.run
-                    patch = asyncio.run(agent.run())
+                # Run agent asynchronously (non-blocking)
+                patch = await agent.run()
                 
                 # Cache the patch if successful
                 if patch.status == "complete" and self.config.enable_caching:
@@ -370,11 +360,21 @@ class MasterContextCompiler:
         Returns:
             Intent analysis dict
         """
-        message_lower = message.lower()
+        message_lower = message.lower().strip()
         
         # Simple keyword-based intent detection
         intents = []
         confidence = 1.0
+        
+        # Greeting/Social intents - high confidence, no exploration needed
+        greeting_keywords = [
+            "hello", "hi", "hey", "greetings", 
+            "你好", "您好", "嗨", "哈喽",
+            "introduce", "介绍", "自己", "你是谁", "你是什么",
+        ]
+        if any(kw in message_lower for kw in greeting_keywords):
+            intents.append("greeting")
+            confidence = 0.9  # High confidence for greetings
         
         # Query intents
         if any(kw in message_lower for kw in ["what", "how", "why", "where", "when", "who", "什么", "怎么", "为什么", "哪里"]):

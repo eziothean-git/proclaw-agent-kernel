@@ -2,6 +2,7 @@
 Agent Kernel Python Intelligence Layer.
 """
 import asyncio
+import json
 import os
 import time
 import traceback
@@ -174,7 +175,7 @@ async def process_request_async(request_id: str, callback_url: str):
         recent_snapshots = await memory_manager.get_recent_snapshots(request.session_id, limit=2)
         recent_tasks = [task.model_dump(mode='json') for task in await memory_manager.get_session_tasks(request.session_id)][:5]
         
-        master_context = get_master_compiler().compile(
+        master_context = await get_master_compiler().compile(
             request=request,
             session=session,
             additional_context={
@@ -256,19 +257,74 @@ async def process_request_async(request_id: str, callback_url: str):
         })
 
 
-async def send_callback(callback_url: str, payload: dict):
-    """发送回调到 Gateway"""
+async def send_callback(callback_url: str, payload: dict, max_retries: int = 3):
+    """发送回调到 Gateway，支持重试"""
+    for attempt in range(max_retries):
+        try:
+            response = await callback_client.post(callback_url, json=payload)
+            if response.status_code < 400:
+                logger.debug("Callback sent successfully", 
+                           url=callback_url, 
+                           attempt=attempt + 1)
+                return True
+            else:
+                logger.warning(f"Callback failed (attempt {attempt + 1}/{max_retries})", 
+                             url=callback_url, 
+                             status=response.status_code,
+                             response=response.text[:200])
+        except Exception as e:
+            logger.warning(f"Callback exception (attempt {attempt + 1}/{max_retries})", 
+                         url=callback_url, 
+                         error=str(e))
+        
+        # 指数退避重试
+        if attempt < max_retries - 1:
+            wait_time = 2 ** attempt  # 1s, 2s, 4s
+            logger.info(f"Retrying callback in {wait_time}s...", 
+                       url=callback_url, 
+                       next_attempt=attempt + 2)
+            await asyncio.sleep(wait_time)
+    
+    # 所有重试失败，记录到失败队列
+    logger.error("Callback failed after all retries", 
+                url=callback_url, 
+                request_id=payload.get("request_id"),
+                max_retries=max_retries)
+    
+    # 保存失败的回调到文件系统，便于后续人工处理
+    await save_failed_callback(callback_url, payload)
+    return False
+
+
+async def save_failed_callback(callback_url: str, payload: dict):
+    """保存失败的回调到文件系统"""
     try:
-        response = await callback_client.post(callback_url, json=payload)
-        if response.status_code >= 400:
-            logger.error("Callback failed", 
-                        url=callback_url, 
-                        status=response.status_code,
-                        response=response.text)
-        else:
-            logger.debug("Callback sent successfully", url=callback_url)
+        data_path = os.environ.get("DATA_PATH", "./data")
+        failed_callbacks_dir = os.path.join(data_path, "failed_callbacks")
+        os.makedirs(failed_callbacks_dir, exist_ok=True)
+        
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+        request_id = payload.get("request_id", "unknown")
+        filename = f"{timestamp}_{request_id}.json"
+        filepath = os.path.join(failed_callbacks_dir, filename)
+        
+        failed_record = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "callback_url": callback_url,
+            "payload": payload,
+            "retry_count": 3,
+        }
+        
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(failed_record, f, ensure_ascii=False, indent=2)
+        
+        logger.info("Failed callback saved to file", 
+                   filepath=filepath, 
+                   request_id=request_id)
     except Exception as e:
-        logger.error("Failed to send callback", url=callback_url, error=str(e))
+        logger.error("Failed to save failed callback", 
+                    error=str(e), 
+                    request_id=payload.get("request_id"))
 
 
 @app.post("/v1/execute")
