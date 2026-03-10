@@ -3,6 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { IRConverterService } from '../core/ir-converter.service';
 import { StorageService, OutputMessage } from '../core/storage.service';
 import { RouterService } from '../router/router.service';
+import { RequestManagerClient } from '../grpc/request-manager.client';
+import { RawRequestStorageService, RawChatRequest, RawRequestEntry } from '../raw-request/raw-request-storage.service';
 
 interface ChatRequestDto {
   sessionId?: string;
@@ -10,7 +12,9 @@ interface ChatRequestDto {
   userId: string;
   platform?: string;
   deviceId?: string;
+  priority?: number;
   metadata?: Record<string, unknown>;
+  sourceIp?: string;
 }
 
 interface ChatResponseDto {
@@ -37,6 +41,8 @@ export class GatewayService {
     private readonly storageService: StorageService,
     private readonly irConverterService: IRConverterService,
     private readonly routerService: RouterService,
+    private readonly requestManagerClient: RequestManagerClient,
+    private readonly rawRequestStorage: RawRequestStorageService,
   ) {
     // Listen for responses from outbox
     this.storageService.watchOutbox((response) => {
@@ -79,7 +85,26 @@ export class GatewayService {
       }
     }
 
-    // Convert to Input IR
+    // Step 1: Save raw request (before IR conversion)
+    const rawRequest: RawChatRequest = {
+      sessionId,
+      message: dto.message,
+      userId: dto.userId,
+      platform: dto.platform,
+      deviceId: dto.deviceId,
+      metadata: dto.metadata,
+    };
+    
+    await this.rawRequestStorage.saveRawRequest(
+      requestId,
+      sessionId,
+      rawRequest,
+      dto.sourceIp
+    );
+    
+    this.logger.debug(`Raw request saved for ${requestId}`);
+
+    // Step 2: Convert to Input IR
     const inputIR = await this.irConverterService.convertToInputIR(
       {
         message: dto.message,
@@ -87,15 +112,27 @@ export class GatewayService {
         platform: dto.platform || 'http',
         deviceId: dto.deviceId || `http-${process.pid}`,
         sessionId,
+        priority: dto.priority,
         metadata: dto.metadata,
       },
       requestId,
     );
 
-    // Save to inbox (file system mailbox)
-    await this.storageService.saveRequestToInbox(inputIR);
+    // Step 3: Submit to Request Manager via gRPC
+    try {
+      const submitResponse = await this.requestManagerClient.submitRequest(
+        inputIR,
+        dto.priority || 3
+      );
 
-    this.logger.log(`Request ${requestId} written to inbox for session ${sessionId}`);
+      this.logger.log(
+        `Request ${requestId} submitted to Request Manager: ${submitResponse.message} ` +
+        `(queue position: ${submitResponse.queuePosition})`
+      );
+    } catch (error) {
+      this.logger.error(`Failed to submit request ${requestId} to Request Manager: ${error.message}`);
+      throw error;
+    }
 
     // Return immediately (asynchronous processing)
     return {
@@ -149,21 +186,55 @@ export class GatewayService {
     status: 'pending' | 'processing' | 'completed' | 'failed' | 'not_found';
     response?: OutputMessage;
   }> {
-    const status = await this.storageService.getRequestStatus(requestId);
+    // First check Request Manager via gRPC
+    try {
+      const rmStatus = await this.requestManagerClient.getRequestStatus(requestId);
+      
+      // Map Request Manager status to Gateway status
+      const statusMap: { [key: number]: 'pending' | 'processing' | 'completed' | 'failed' } = {
+        1: 'pending',     // QUEUED
+        2: 'processing',  // PROCESSING
+        3: 'completed',   // COMPLETED
+        4: 'failed',      // FAILED
+        5: 'failed',      // CANCELLED
+        6: 'pending',     // RETRYING
+      };
 
-    if (status.status === 'completed' || status.status === 'failed') {
-      const response = await this.storageService.getResponseFromOutbox(requestId);
+      const status = statusMap[rmStatus.status] || 'not_found';
+
+      if (status === 'completed' || status === 'failed') {
+        const response = await this.storageService.getResponseFromOutbox(requestId);
+        return {
+          requestId,
+          status,
+          response: response || undefined,
+        };
+      }
+
+      return {
+        requestId,
+        status,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to get status from Request Manager: ${error.message}`);
+      
+      // Fallback to local storage
+      const status = await this.storageService.getRequestStatus(requestId);
+      
+      if (status.status === 'completed' || status.status === 'failed') {
+        const response = await this.storageService.getResponseFromOutbox(requestId);
+        return {
+          requestId,
+          status: status.status,
+          response: response || undefined,
+        };
+      }
+
       return {
         requestId,
         status: status.status,
-        response: response || undefined,
       };
     }
-
-    return {
-      requestId,
-      status: status.status,
-    };
   }
 
   async getSessionStatus(sessionId: string): Promise<{
@@ -184,38 +255,14 @@ export class GatewayService {
     let completed = 0;
 
     try {
-      // Read inbox index
-      const inboxPath = require('path').join(
-        process.env.GATEWAY_STORAGE_PATH || '/var/gateway',
-        'inbox',
-        'index.jsonl',
-      );
-      const fs = require('fs').promises;
-      const inboxContent = await fs.readFile(inboxPath, 'utf-8');
-      const inboxLines = inboxContent.split('\n').filter((line: string) => line.trim());
-
-      for (const line of inboxLines) {
-        const entry = JSON.parse(line);
-        if (entry.sessionId === sessionId) {
-          if (entry.status === 'pending') pending++;
-          else if (entry.status === 'processing') processing++;
-        }
-      }
-
-      // Read outbox index
-      const outboxPath = require('path').join(
-        process.env.GATEWAY_STORAGE_PATH || '/var/gateway',
-        'outbox',
-        'index.jsonl',
-      );
-      const outboxContent = await fs.readFile(outboxPath, 'utf-8');
-      const outboxLines = outboxContent.split('\n').filter((line: string) => line.trim());
-
-      for (const line of outboxLines) {
-        const entry = JSON.parse(line);
-        if (entry.sessionId === sessionId) {
-          completed++;
-        }
+      // Read raw requests index to count session requests
+      const rawRequests = await this.rawRequestStorage.getRawRequestsBySession(sessionId);
+      
+      for (const req of rawRequests) {
+        const status = await this.getRequestStatus(req.requestId);
+        if (status.status === 'pending') pending++;
+        else if (status.status === 'processing') processing++;
+        else if (status.status === 'completed') completed++;
       }
     } catch {
       // Ignore errors, return zeros
@@ -231,5 +278,19 @@ export class GatewayService {
         completed,
       },
     };
+  }
+
+  /**
+   * Get raw request by ID (for debugging/audit)
+   */
+  async getRawRequest(requestId: string) {
+    return this.rawRequestStorage.getRawRequest(requestId);
+  }
+
+  /**
+   * Get raw requests by session (for debugging/audit)
+   */
+  async getRawRequestsBySession(sessionId: string) {
+    return this.rawRequestStorage.getRawRequestsBySession(sessionId);
   }
 }

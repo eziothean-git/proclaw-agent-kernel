@@ -1,0 +1,146 @@
+syntax = "proto3";
+
+package requestmanager;
+
+import "google/protobuf/timestamp.proto";
+
+service RequestManager {
+  // 提交请求
+  rpc SubmitRequest (SubmitRequestRequest) returns (SubmitRequestResponse);
+  
+  // 获取请求状态
+  rpc GetRequestStatus (GetRequestStatusRequest) returns (GetRequestStatusResponse);
+  
+  // 取消请求
+  rpc CancelRequest (CancelRequestRequest) returns (CancelRequestResponse);
+  
+  // 流式状态更新
+  rpc StreamRequestStatus (GetRequestStatusRequest) returns (stream StatusUpdate);
+  
+  // 获取队列状态
+  rpc GetQueueStatus (GetQueueStatusRequest) returns (GetQueueStatusResponse);
+  
+  // 获取Worker状态
+  rpc GetWorkerStatus (GetWorkerStatusRequest) returns (GetWorkerStatusResponse);
+  
+  // 手动重试请求
+  rpc RetryRequest (RetryRequestRequest) returns (RetryRequestResponse);
+}
+
+// 请求状态
+enum RequestStatus {
+  UNKNOWN = 0;
+  QUEUED = 1;
+  PROCESSING = 2;
+  COMPLETED = 3;
+  FAILED = 4;
+  CANCELLED = 5;
+  RETRYING = 6;
+}
+
+// 优先级
+enum Priority {
+  P0_EMERGENCY = 0;
+  P1_SCHEDULED = 1;
+  P2_HIGH = 2;
+  P3_NORMAL = 3;
+  P4_BACKGROUND = 4;
+}
+
+// 提交请求
+message SubmitRequestRequest {
+  string request_id = 1;
+  string session_id = 2;
+  string user_id = 3;
+  Priority priority = 4;
+  string body = 5;
+  map<string, string> metadata = 6;
+  google.protobuf.Timestamp received_at = 7;
+}
+
+message SubmitRequestResponse {
+  string request_id = 1;
+  RequestStatus status = 2;
+  int32 queue_position = 3;
+  int64 estimated_wait_ms = 4;
+  string message = 5;
+}
+
+// 获取状态
+message GetRequestStatusRequest {
+  string request_id = 1;
+}
+
+message GetRequestStatusResponse {
+  string request_id = 1;
+  string session_id = 2;
+  RequestStatus status = 3;
+  int32 progress_percent = 4;  // 0-100
+  int64 wait_time_ms = 5;
+  int64 processing_time_ms = 6;
+  int32 retry_count = 7;
+  string error_message = 8;
+  google.protobuf.Timestamp started_at = 9;
+  google.protobuf.Timestamp completed_at = 10;
+}
+
+// 状态更新（流式）
+message StatusUpdate {
+  string request_id = 1;
+  RequestStatus status = 2;
+  int32 progress_percent = 3;
+  string message = 4;
+  google.protobuf.Timestamp timestamp = 5;
+}
+
+// 取消请求
+message CancelRequestRequest {
+  string request_id = 1;
+}
+
+message CancelRequestResponse {
+  string request_id = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+// 队列状态
+message GetQueueStatusRequest {}
+
+message GetQueueStatusResponse {
+  int32 total_size = 1;
+  map<int32, int32> by_priority = 2;  // priority -> count
+  int32 waiting_sessions = 3;
+}
+
+// Worker状态
+message GetWorkerStatusRequest {}
+
+message WorkerInfo {
+  string task_id = 1;
+  string session_id = 2;
+  google.protobuf.Timestamp start_time = 3;
+  google.protobuf.Timestamp timeout_at = 4;
+  int32 retry_count = 5;
+}
+
+message GetWorkerStatusResponse {
+  int32 max_workers = 1;
+  int32 active_workers = 2;
+  int32 available_slots = 3;
+  repeated WorkerInfo active_tasks = 4;
+}
+
+// 重试请求
+message RetryRequestRequest {
+  string request_id = 1;
+  bool reset_retry_count = 2;
+  Priority new_priority = 3;
+}
+
+message RetryRequestResponse {
+  string request_id = 1;
+  bool success = 2;
+  RequestStatus new_status = 3;
+  string message = 4;
+}

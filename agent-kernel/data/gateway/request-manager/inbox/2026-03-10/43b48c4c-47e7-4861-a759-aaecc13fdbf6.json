@@ -1,0 +1,10 @@
+{
+  "requestId": "43b48c4c-47e7-4861-a759-aaecc13fdbf6",
+  "sessionId": "sess_1773140632017_kh48hwcw1",
+  "userId": "test-user-001",
+  "priority": 0,
+  "body": "{\"header\":{\"timestamp\":\"2026-03-10T11:04:22.357Z\",\"platform\":\"http\",\"deviceId\":\"http-224543\",\"userId\":\"test-user-001\",\"sessionId\":\"sess_1773140632017_kh48hwcw1\",\"requestId\":\"43b48c4c-47e7-4861-a759-aaecc13fdbf6\",\"priority\":0},\"metadata\":{},\"body\":\"测试gRPC连接\"}",
+  "metadata": {},
+  "receivedAt": "2026-03-10T11:04:22.368Z",
+  "filePath": "/home/eziothean/ProClaw/agent-kernel/data/gateway/request-manager/inbox/2026-03-10/43b48c4c-47e7-4861-a759-aaecc13fdbf6.json"
+}

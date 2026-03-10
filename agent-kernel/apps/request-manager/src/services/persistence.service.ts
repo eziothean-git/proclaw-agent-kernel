@@ -15,7 +15,11 @@ export class PersistenceService implements OnModuleInit {
   private currentDate: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.basePath = this.configService.get<string>('STORAGE_BASE_PATH', '/var/gateway/request-manager');
+    // Use GATEWAY_STORAGE_PATH if available, fall back to STORAGE_BASE_PATH
+    const gatewayPath = this.configService.get<string>('GATEWAY_STORAGE_PATH');
+    this.basePath = gatewayPath 
+      ? path.join(gatewayPath, 'request-manager')
+      : this.configService.get<string>('STORAGE_BASE_PATH', '/var/gateway/request-manager');
     this.inboxPath = path.join(this.basePath, 'inbox');
     this.auditPath = path.join(this.basePath, 'audit');
     this.statePath = path.join(this.basePath, 'state');

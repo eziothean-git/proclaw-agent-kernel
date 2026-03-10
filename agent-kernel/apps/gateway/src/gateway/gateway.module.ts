@@ -6,11 +6,13 @@ import { WebhookController } from './webhook.controller';
 import { RouterModule } from '../router/router.module';
 import { CoreModule } from '../core/core.module';
 import { KernelModule } from '../kernel/kernel.module';
+import { RequestManagerClient } from '../grpc/request-manager.client';
+import { RawRequestStorageService } from '../raw-request/raw-request-storage.service';
 
 @Module({
   imports: [CoreModule, RouterModule, KernelModule, HttpModule],
   controllers: [GatewayController, WebhookController],
-  providers: [GatewayService],
-  exports: [GatewayService],
+  providers: [GatewayService, RequestManagerClient, RawRequestStorageService],
+  exports: [GatewayService, RequestManagerClient, RawRequestStorageService],
 })
 export class GatewayModule {}
