@@ -3,10 +3,22 @@ End-to-End Test - Full workflow with LLM integration
 
 This test verifies:
 1. Complete task execution flow
-2. LLM integration (requires OPENAI_API_KEY)
+2. LLM integration (supports Ark/Volcengine and OpenAI)
 3. Tool execution
 4. Phase transitions
 5. Event logging
+6. Working Set construction with real LLM context
+
+Usage:
+    # Test with Ark (Volcengine) - DEFAULT
+    export ARK_API_KEY="your-ark-key"
+    export ARK_MODEL="glm-4-7-251222"  # or doubao-1-5-pro-32k-250115
+    python tests/e2e_test.py
+    
+    # Test with OpenAI
+    export LLM_PROVIDER="openai"
+    export OPENAI_API_KEY="your-openai-key"
+    python tests/e2e_test.py
 """
 import asyncio
 import os
@@ -17,8 +29,12 @@ sys.path.insert(0, '/home/eziothean/ProClaw/agent-kernel/apps/python-kernel')
 from datetime import datetime
 from uuid import uuid4
 
-# Setup environment
+# Setup environment - default to Ark provider
 os.environ["KERNEL_RUN_MODE"] = "real"  # Use real LLM
+if not os.environ.get("LLM_PROVIDER"):
+    os.environ["LLM_PROVIDER"] = "ark"
+if not os.environ.get("ARK_MODEL"):
+    os.environ["ARK_MODEL"] = "glm-4-7-251222"
 
 import structlog
 structlog.configure(
@@ -46,15 +62,17 @@ from executors_client.coordinator_interface import get_execution_coordinator
 
 
 async def test_simple_task():
-    """Test a simple task end-to-end"""
+    """Test a simple task end-to-end with real LLM"""
     print("\n" + "="*70)
-    print("END-TO-END TEST: Simple File Listing Task")
+    print("END-TO-END TEST: Simple File Listing Task (Real LLM)")
     print("="*70 + "\n")
     
     # Initialize kernel
     print("1. Initializing kernel...")
     await initialize_kernel()
-    print("   ✓ Kernel initialized\n")
+    print("   ✓ Kernel initialized")
+    print("   ✓ Skills registered (fs-skill, shell-skill)")
+    print("   ✓ OS Interface started\n")
     
     # Create task
     print("2. Creating task...")
@@ -63,7 +81,7 @@ async def test_simple_task():
         session_id="e2e_session",
         process_id="e2e_process",
         status=TaskStatus.IDLE,
-        goal="List the files in the current working directory",
+        goal="List the files in the current working directory and summarize what you found",
         constraints=["max_steps: 5"],
         allowed_capabilities=["fs-skill"],
         forbidden_capabilities=[],
@@ -75,14 +93,15 @@ async def test_simple_task():
             "session_id": task.session_id,
             "user_id": "test_user",
             "request_id": str(uuid4()),
-            "request_message": "List files in current directory",
+            "request_message": task.goal,
         },
         task_goal=task.goal,
         constraints=task.constraints,
         allowed_capabilities=task.allowed_capabilities,
         forbidden_capabilities=task.forbidden_capabilities,
     )
-    print(f"   ✓ Task created: {task.id}\n")
+    print(f"   ✓ Task created: {task.id}")
+    print(f"   ✓ Goal: {task.goal}\n")
     
     # Create Agent Thread
     print("3. Creating Agent Thread...")
@@ -94,23 +113,38 @@ async def test_simple_task():
     )
     print(f"   ✓ Agent Thread created: {agent.thread_id}")
     print(f"   ✓ Initial phase: {agent.current_phase.value}")
-    print(f"   ✓ Max steps: {agent.max_steps}\n")
+    print(f"   ✓ Max steps: {agent.max_steps}")
+    print(f"   ✓ Working Set Builder: initialized\n")
     
-    # Execute
-    print("4. Executing task (this may take a moment)...")
-    print("   - Will call LLM to generate intentions")
-    print("   - May execute tools if requested by LLM")
+    # Execute with real LLM
+    print("4. Executing task with real LLM...")
+    print("   ⚠ This will make API calls to your configured LLM provider")
+    print("   - SEE: Building Working Set from Event Log")
+    print("   - ACT: Calling LLM to generate intentions")
+    print("   - UPDATE: Executing tools and logging events")
     print()
     
     try:
+        start_time = datetime.now()
         result = await agent.run()
+        duration = (datetime.now() - start_time).total_seconds()
         
         print("\n5. Execution completed!")
+        print(f"   ✓ Duration: {duration:.2f}s")
         print(f"   ✓ Success: {result.success}")
-        print(f"   ✓ Final content: {result.content[:200]}...")
+        
+        # Show final output
+        output = result.content if hasattr(result, 'content') else str(result)
+        print(f"\n   Final Output (first 300 chars):")
+        print(f"   {'-'*66}")
+        for line in output[:300].split('\n'):
+            print(f"   {line}")
+        if len(output) > 300:
+            print(f"   ... ({len(output) - 300} more chars)")
+        print(f"   {'-'*66}\n")
         
         # Check event log
-        print(f"\n6. Event Log Summary:")
+        print(f"6. Event Log Analysis:")
         log_export = agent.get_event_log_export()
         print(f"   ✓ Total events: {log_export['event_log']['event_count']}")
         print(f"   ✓ Current phase: {log_export['current_phase']}")
@@ -123,12 +157,23 @@ async def test_simple_task():
             if count > 0:
                 print(f"      - {phase}: {count} events")
         
+        # Show event types
+        events = log_export['event_log']['events']
+        if events:
+            print(f"\n   Event timeline:")
+            for i, event in enumerate(events[:10], 1):
+                event_type = event.get('event_type', 'unknown')
+                phase = event.get('phase', 'unknown')
+                print(f"      {i}. [{event_type}] Phase: {phase}")
+        
         # Show observations
         if result.observations:
-            print(f"\n   Tool observations: {len(result.observations)}")
-            for obs in result.observations[:3]:  # Show first 3
-                print(f"      - {obs.get('skill', 'unknown')}.{obs.get('tool', 'unknown')}: "
-                      f"{'✓' if obs.get('success') else '✗'}")
+            print(f"\n   Tool executions: {len(result.observations)}")
+            for obs in result.observations:
+                skill = obs.get('skill', 'unknown')
+                tool = obs.get('tool', 'unknown')
+                success = '✓' if obs.get('success') else '✗'
+                print(f"      {success} {skill}.{tool}")
         
         print("\n" + "="*70)
         print("✓ END-TO-END TEST PASSED!")
@@ -138,6 +183,7 @@ async def test_simple_task():
         print(f"\n   ✗ Execution failed: {e}")
         import traceback
         traceback.print_exc()
+        raise
     
     # Cleanup
     print("7. Cleaning up...")
@@ -259,13 +305,31 @@ async def main():
     print("#" + " "*68 + "#")
     print("#"*70 + "\n")
     
-    # Check API key
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("⚠ Warning: OPENAI_API_KEY not set!")
-        print("   LLM tests will fail. Set the API key to run full tests.\n")
-        return
+    # Check API key based on provider
+    provider = os.environ.get("LLM_PROVIDER", "ark")
+    if provider == "ark":
+        api_key = os.environ.get("ARK_API_KEY")
+        model = os.environ.get("ARK_MODEL", "glm-4-7-251222")
+        if not api_key:
+            print("⚠ Warning: ARK_API_KEY not set!")
+            print("   Set it with: export ARK_API_KEY=\"your-ark-api-key\"\n")
+            return
+        else:
+            print(f"✓ ARK_API_KEY is set")
+            print(f"✓ Using model: {model}")
+            print(f"✓ Provider: Ark (Volcengine)\n")
+    elif provider == "openai":
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            print("⚠ Warning: OPENAI_API_KEY not set!")
+            print("   LLM tests will fail. Set the API key to run full tests.\n")
+            return
+        else:
+            print("✓ OPENAI_API_KEY is set\n")
     else:
-        print("✓ OPENAI_API_KEY is set\n")
+        print(f"⚠ Warning: Unknown LLM_PROVIDER '{provider}'")
+        print("   Supported: ark, openai\n")
+        return
     
     try:
         # Test 1: Simple task execution

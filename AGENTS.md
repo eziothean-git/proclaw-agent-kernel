@@ -19,23 +19,29 @@ Agent Kernel is a **long-running information flow kernel**, not "a big agent". I
 - Request Manager (TypeScript/gRPC) - Priority-based request queue
 - Scheduler (TypeScript) - Agent Thread scheduling infrastructure
 - Python Kernel - FastAPI app with basic structure
-  - Prime Personality - **PLACHOLDER: 简单 mock 实现，仅用于测试收发**
+  - **Atomic Agent Thread** - ✅ **FULLY IMPLEMENTED** - Event Log + Working Set architecture
+    - Event Log Manager - Complete event stream tracking
+    - Working Set Builder - Rule-driven context constructor (YAML configurable)
+    - Agent Output Parser - Structured intent parsing (JSON/YAML/heuristic)
+    - SEE-ACT-UPDATE execution loop
+    - Phase-based execution (Explore → Execute → Complete)
+    - Upper layer intervention APIs (pause/resume/update)
+  - Prime Personality - **PLACEHOLDER: 简单 mock 实现，仅用于测试收发**
   - Context Compilers (Master & Process) - **PLACEHOLDER: 简单实现，仅用于测试**
   - Session Host - **PLACEHOLDER: 简单实现，仅用于测试**
-  - Agent Thread - **PLACEHOLDER: 简单 mock 实现，仅用于测试**
   - Inbox Watcher - Filesystem mailbox integration (for Gateway integration)
-  - Scheduler - Async task scheduling
+  - Scheduler - Async task scheduling with Agent Thread lifecycle management
+  - Execution Coordinator - Local skill registry + remote executor client
+  - Agentic OS Interface Skill - System-level coordination layer
 - Storage/Runtime Memory (FileStorageAdapter & SQLiteStorageAdapter)
 - Integration Tests - Gateway + Python Kernel full flow testing
 
-> **注意:** 上述标记为 PLACEHOLDER 的模块仅为测试 Gateway 和 Python Kernel 之间的请求收发流程而实现的简单占位符。这些实现没有完全遵循架构设计意图，仅验证了基本的请求流转功能。完整的 Prime Personality、Context Compilers、Session Host、Agent Thread 等模块需要根据架构文档重新设计和实现。
+> **注意:** Prime Personality、Context Compilers、Session Host 仍为 PLACEHOLDER 实现，需要根据架构文档完善。
+> **Atomic Agent** 已完成完整实现，包含测试报告 (50/50 tests passed)
 
 **NOT YET Implemented (Architecture defined in `/schema/`):**
-- Working Set Builder (rule-driven view constructor)
 - Memory Base (long-term memory layer)
-- Agentic OS Interface Skill (system interface skill)
-- Request Executor/Coordinator (execution infrastructure)
-- Skill execution via MCP protocol
+- Advanced Agent capabilities (multi-agent collaboration)
 
 ## Architecture Overview
 
@@ -209,6 +215,24 @@ python -m pytest tests/ -v
 
 # Run async tests
 python -m pytest tests/ --asyncio-mode=auto
+
+# Run Atomic Agent tests
+PYTHONPATH=/home/eziothean/ProClaw/agent-kernel/apps/python-kernel \
+  python tests/integration_test.py
+
+# Run Atomic Agent Mock E2E test
+PYTHONPATH=/home/eziothean/ProClaw/agent-kernel/apps/python-kernel \
+  python tests/mock_e2e_test.py
+
+# Run Atomic Agent with real LLM (requires ARK_API_KEY)
+export ARK_API_KEY="your-ark-key"
+export ARK_MODEL="glm-4-7-251222"
+PYTHONPATH=/home/eziothean/ProClaw/agent-kernel/apps/python-kernel \
+  python tests/e2e_test.py
+
+# Test Ark LLM connection
+PYTHONPATH=/home/eziothean/ProClaw/agent-kernel/apps/python-kernel \
+  python tests/test_ark_llm.py
 ```
 
 ### Integration Tests
@@ -321,14 +345,24 @@ class MyModel(BaseModel):
 - `PORT` - Kernel HTTP port (default: 8000)
 - `HOST` - Bind address (default: 0.0.0.0)
 - `KERNEL_RUN_MODE` - Execution mode:
-  - `real`: Call actual LLM API (requires OPENAI_API_KEY)
+  - `real`: Call actual LLM API (requires LLM API key)
   - `mock`: Return mock responses (for testing)
 - `DATA_PATH` - Runtime data storage path (default: ./data)
 - `STORAGE_TYPE` - Backend type: `file` or `sqlite` (default: file)
 - `GATEWAY_INBOX_PATH` - Gateway inbox directory for filesystem mailbox integration
 - `GATEWAY_URL` - Gateway base URL for callbacks (default: http://localhost:3000)
 - `INBOX_POLL_INTERVAL` - Inbox polling interval in seconds (default: 1.0)
-- `OPENAI_API_KEY` - Required for real mode
+
+#### LLM Provider Configuration
+- `LLM_PROVIDER` - LLM provider: `ark` (default), `openai`, `custom`
+- `ARK_API_KEY` - Volcengine Ark API key (for Chinese market)
+- `ARK_BASE_URL` - Ark API endpoint (default: https://ark.cn-beijing.volces.com/api/v3)
+- `ARK_MODEL` - Ark model name (default: glm-4.7)
+- `OPENAI_API_KEY` - OpenAI API key (alternative provider)
+- `OPENAI_BASE_URL` - OpenAI API endpoint
+- `OPENAI_MODEL` - OpenAI model name
+- `LLM_TEMPERATURE` - Generation temperature (default: 0.7)
+- `LLM_MAX_TOKENS` - Max tokens per generation (default: 4000)
 
 ### Integration Test
 - `GATEWAY_STORAGE_PATH` - Test data directory for Gateway
@@ -389,6 +423,8 @@ data/
 - [Integration Test Guide](./docs/INTEGRATION_TEST.md) - Detailed testing documentation
 - [Integration Test Script](./scripts/test-gateway-kernel-integration.sh) - Automated test script
 - [History Verification](./scripts/verify-history.py) - History records validator
+- [Atomic Agent Integration Test Plan](./INTEGRATION_TEST_PLAN.md) - Atomic Agent + Ark LLM testing
+- [Atomic Agent Implementation](./apps/python-kernel/ATOMIC_AGENT_IMPLEMENTATION.md) - Implementation details
 
 ## Running the System
 

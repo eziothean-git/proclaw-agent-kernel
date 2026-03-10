@@ -18,6 +18,7 @@ from typing import Any
 import structlog
 
 from executors_client.coordinator_interface import get_execution_coordinator
+from llm_client import get_llm_client, LLMClient
 from schemas.models import AgentOutput, CompiledContext, TaskSnapshot
 from skills.agentic_os_interface import get_os_interface_skill
 from thread_runtime.event_log import EventLogManager
@@ -76,6 +77,13 @@ class AgentThread:
         self.is_paused = False
         self.pause_reason: str | None = None
         
+        # Setup logger first (before any operations that might need it)
+        self.logger = logger.bind(
+            component="AgentThread",
+            thread_id=self.thread_id,
+            task_id=task.id,
+        )
+        
         # LLM client (optional, for real mode)
         self.run_mode = os.environ.get("KERNEL_RUN_MODE", "mock")
         self.agent = None
@@ -84,12 +92,6 @@ class AgentThread:
         
         # Register with OS interface for monitoring/control
         self._register_with_os_interface()
-        
-        self.logger = logger.bind(
-            component="AgentThread",
-            thread_id=self.thread_id,
-            task_id=task.id,
-        )
         
         self.logger.info(
             "Agent Thread initialized",
@@ -120,16 +122,23 @@ class AgentThread:
     def _create_agent(self):
         """Create LLM agent (for real mode)."""
         try:
-            from pydantic_ai import Agent
-            from pydantic_ai.models.openai import OpenAIModel
+            # Use unified LLM Client supporting OpenAI, Kimi, and custom providers
+            client = get_llm_client()
+            success = client.initialize(system_prompt=self._build_system_prompt())
             
-            model = OpenAIModel("gpt-4")
-            return Agent(
-                model=model,
-                system_prompt=self._build_system_prompt(),
-            )
-        except ImportError:
-            self.logger.warning("pydantic_ai not available, using mock mode")
+            if success:
+                self.logger.info(
+                    "LLM client initialized",
+                    provider=client.config.provider,
+                    model=client.config.model,
+                )
+                return client
+            else:
+                self.logger.error("Failed to initialize LLM client, falling back to mock mode")
+                return None
+                
+        except Exception as e:
+            self.logger.warning("Failed to create LLM agent", error=str(e))
             return None
     
     def _build_system_prompt(self) -> str:
@@ -287,8 +296,9 @@ success: true | false
         
         if self.run_mode == "real" and self.agent:
             try:
-                result = await self.agent.run(user_prompt=prompt)
-                return str(result.data) if hasattr(result, 'data') else str(result)
+                # Use LLMClient.generate() method
+                result = await self.agent.generate(prompt)
+                return result
             except Exception as e:
                 self.logger.error("LLM call failed", error=str(e))
                 return self._generate_mock_action(working_set)
