@@ -124,7 +124,7 @@ class SessionHost:
             },
         )
 
-        compiled_context = self.process_compiler.compile_task_context(
+        compiled_context = await self.process_compiler.compile_task_context(
             task_id=task_id,
             process_definition=process_definition,
             intermediate_repr=intermediate_repr,

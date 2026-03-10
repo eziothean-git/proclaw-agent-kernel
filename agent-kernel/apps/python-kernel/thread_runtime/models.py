@@ -59,9 +59,22 @@ class Event(BaseModel):
     def to_prompt_text(self) -> str:
         """Convert event to text for prompt inclusion."""
         if self.event_type == EventType.TOOL_RESULT:
-            result = self.content.get("result", {})
-            success = result.get("success", False)
-            return f"[{self.event_type}] {'✓' if success else '✗'} {result.get('tool', 'unknown')}"
+            success = self.content.get("success", False)
+            tool_name = self.content.get('tool', 'unknown')
+            result = self.content.get('result', '')
+            error = self.content.get('error', '')
+            
+            # Include actual result content, truncated if too long
+            content_str = ""
+            if result:
+                if isinstance(result, (list, dict)):
+                    content_str = str(result)[:500]
+                else:
+                    content_str = str(result)[:500]
+            elif error:
+                content_str = f"Error: {str(error)[:200]}"
+            
+            return f"[{self.event_type}] {'✓' if success else '✗'} {tool_name}: {content_str}"
         elif self.event_type == EventType.OBSERVATION:
             return f"[{self.event_type}] {self.content.get('summary', '')}"
         elif self.event_type == EventType.PHASE_CHANGE:

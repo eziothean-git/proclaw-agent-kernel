@@ -15,18 +15,9 @@ from context_compiler.compiler_agent import ProcessContextCompilerAgent
 logger = structlog.get_logger()
 
 
-def _run_async(coro):
-    """Helper to run async code, handling both sync and async contexts."""
-    try:
-        loop = asyncio.get_running_loop()
-        # We're in an async context, use create_task
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            future = pool.submit(asyncio.run, coro)
-            return future.result()
-    except RuntimeError:
-        # No running loop, use asyncio.run
-        return asyncio.run(coro)
+async def _run_async(coro):
+    """Helper to run async code in async context."""
+    return await coro
 
 
 class ProcessContextCompiler:
@@ -51,7 +42,7 @@ class ProcessContextCompiler:
     def __init__(self):
         self.logger = logger.bind(component="ProcessContextCompiler")
         
-    def compile_task_context(
+    async def compile_task_context(
         self,
         task_id: str,
         process_definition: dict[str, Any],
@@ -91,8 +82,8 @@ class ProcessContextCompiler:
         )
         
         # Run agent (async)
-        compiled = _run_async(agent.run())
-        
+        compiled = await agent.run()
+
         self.logger.info(
             "Context compiled successfully",
             task_id=task_id,
@@ -100,7 +91,7 @@ class ProcessContextCompiler:
             artifacts_gathered=compiled.metadata.get("artifacts_gathered", 0),
             memory_refs=len(compiled.memory_references),
         )
-        
+
         return compiled
 
 

@@ -153,8 +153,8 @@ Compile complete execution context for task:
 You have access to these skills:
 
 1. **fs-skill** - Read files from Runtime Memory
-   - list_directory: List directory contents
-   - read_file: Read file contents
+   - list_directory: List directory contents (parameter: path)
+   - read_file: Read file contents (parameter: path, NOT file_path)
 
 2. **context-compiler-skill** - Dynamic context management (YOUR SUPERPOWER)
    - update_working_set_rules: Modify how context is assembled
