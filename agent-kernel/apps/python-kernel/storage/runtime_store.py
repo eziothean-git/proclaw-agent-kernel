@@ -6,8 +6,9 @@ from typing import Any, Optional
 
 import structlog
 
-from schemas.models import Request, Session, TaskSnapshot
+from schemas.models import LongTermMemoryCandidate, Request, Session, TaskSnapshot
 from storage.adapter import SQLiteStorageAdapter, get_storage
+from storage.long_term_memory import get_long_term_memory_store
 
 logger = structlog.get_logger()
 
@@ -67,6 +68,47 @@ class RuntimeMemoryManager:
     async def close(self) -> None:
         await self.storage.close()
         self.logger.info("Runtime memory manager closed")
+
+    # Long-term memory operations
+    async def save_long_term_memory(self, candidate: LongTermMemoryCandidate) -> bool:
+        """Save a long-term memory candidate."""
+        ltm_store = get_long_term_memory_store()
+        return ltm_store.save_candidate(candidate)
+
+    async def query_long_term_memory_by_session(
+        self,
+        session_id: str,
+        limit: int | None = None,
+        min_importance: float | None = None,
+    ) -> list[LongTermMemoryCandidate]:
+        """Query long-term memory entries by session."""
+        ltm_store = get_long_term_memory_store()
+        return ltm_store.query_by_session(session_id, limit=limit, min_importance=min_importance)
+
+    async def query_long_term_memory_by_category(
+        self,
+        category: str,
+        limit: int | None = None,
+        min_importance: float | None = None,
+    ) -> list[LongTermMemoryCandidate]:
+        """Query long-term memory entries by category."""
+        ltm_store = get_long_term_memory_store()
+        return ltm_store.query_by_category(category, limit=limit, min_importance=min_importance)
+
+    async def search_long_term_memory_by_importance(
+        self,
+        min_score: float,
+        session_id: str | None = None,
+        limit: int | None = None,
+    ) -> list[LongTermMemoryCandidate]:
+        """Search long-term memory entries by importance score."""
+        ltm_store = get_long_term_memory_store()
+        return ltm_store.search_by_importance(min_score, session_id=session_id, limit=limit)
+
+    async def get_long_term_memory_statistics(self) -> dict[str, Any]:
+        """Get long-term memory storage statistics."""
+        ltm_store = get_long_term_memory_store()
+        return ltm_store.get_statistics()
 
 
 _memory_manager: RuntimeMemoryManager | None = None

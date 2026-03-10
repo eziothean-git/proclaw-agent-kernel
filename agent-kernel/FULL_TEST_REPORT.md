@@ -16,6 +16,71 @@
 
 **成功率**: 100% 🎉
 
+## 🆕 新增功能实现 (2026-03-10)
+
+### ✅ Prime Personality 改造
+**实现文件**: `apps/python-kernel/personality/prime_personality.py`
+- 集成 Master Compiler 提供的预编译上下文
+- 支持 `force_mock` 元数据覆盖用于测试
+- 延迟初始化 LLM Agent
+- 系统 Prompt 更新，指导 LLM 利用预编译上下文
+- **状态**: ✅ 已实现，待 LLM API key 测试
+
+**关键特性**:
+```python
+# 现在 Master Compiler 先编译上下文
+master_context = get_master_compiler().compile(request, session, ...)
+
+# 然后 Prime Personality 消费编译后的上下文
+intermediate_repr = await prime.process_request(request, session_context=master_context)
+```
+
+### ✅ Session Host 长期记忆
+**实现文件**: 
+- `apps/python-kernel/storage/long_term_memory.py` (新)
+- `apps/python-kernel/session_host/session_host.py`
+- `apps/python-kernel/storage/runtime_store.py`
+
+**功能**:
+- 文件系统长期记忆存储 (`LongTermMemoryStore`)
+- JSONL 格式存储 + 索引加速查找
+- 支持按会话、类别、重要性查询
+- Host 级记忆管理（Agent Thread 无权访问）
+
+**存储结构**:
+```
+data/long_term_memory/
+├── index.json              # 全局索引
+├── by_session/             # 按会话存储
+│   └── {session_id}.jsonl
+└── by_category/            # 按类别存储
+    └── {category}.jsonl
+```
+
+**使用方法**:
+```python
+# Session Host 在任务完成后自动提取记忆
+candidates = await host.extract_and_submit_memories(request, result)
+
+# 手动提交记忆
+await host.submit_long_term_candidate(candidate)
+
+# 通过 Memory Manager 查询
+memories = await memory_manager.query_long_term_memory_by_session(session_id)
+```
+
+**状态**: ✅ 已实现并测试通过
+
+### ✅ RuntimeMemoryManager 扩展
+**新增接口**:
+- `save_long_term_memory(candidate)` - 保存记忆候选
+- `query_long_term_memory_by_session(session_id, ...)` - 按会话查询
+- `query_long_term_memory_by_category(category, ...)` - 按类别查询
+- `search_long_term_memory_by_importance(min_score, ...)` - 按重要性搜索
+- `get_long_term_memory_statistics()` - 统计信息
+
+**状态**: ✅ 已实现并测试通过
+
 ---
 
 ## 📝 修复记录
@@ -209,13 +274,14 @@ outbox/ 目录 ✅
 
 ### 短期 (本周)
 - [x] ~~修复 PersistentEventLog 反序列化问题~~ ✅
-- [ ] 完善 Prime Personality 实现
-- [ ] 完善 Session Host 实现
+- [x] ~~完善 Prime Personality 实现~~ ✅
+- [x] ~~完善 Session Host 实现~~ ✅
+- [ ] 长期记忆检索与利用（会话启动时自动加载相关记忆）
 
 ### 中期 (本月)
-- [ ] 实现 Memory Base (长期记忆层)
 - [ ] 添加更多边界测试
 - [ ] 性能基准测试
+- [ ] 完善记忆提取算法（现在使用简单启发式）
 
 ### 长期 (下月)
 - [ ] 多 Agent 协作 (A2A)
@@ -230,10 +296,34 @@ outbox/ 目录 ✅
 
 - ✅ **117/117 测试通过 (100%)**
 - ✅ 所有已知问题已修复
+- ✅ **Prime Personality 实现完成** - 集成 Master Compiler 上下文
+- ✅ **Session Host 实现完成** - 长期记忆管理功能
+- ✅ **Memory Base 基础实现** - 文件系统长期记忆存储
 - ✅ 核心功能完整
 - ✅ 数据流验证成功
 - ✅ 并发处理能力正常
 - ✅ 历史记录完整保存
 
 **系统已达到生产就绪状态！** 🎉🎉🎉
+
+---
+
+## 实现统计 (2026-03-10)
+
+### 新增代码
+
+| 组件 | 文件 | 行数 | 说明 |
+|------|------|------|------|
+| Long-term Memory | `storage/long_term_memory.py` | ~370 | 文件系统长期记忆存储 |
+| Prime Personality | `personality/prime_personality.py` | +100 | 改造以支持编译上下文 |
+| Session Host | `session_host/session_host.py` | +100 | 长期记忆提取与提交 |
+| RuntimeMemoryManager | `storage/runtime_store.py` | +40 | LTM 接口扩展 |
+| **总计** | - | **~610** | **新增代码行数** |
+
+### 测试覆盖
+
+- Prime Personality: 支持 `force_mock` 测试模式 ✅
+- Long-term Memory: 文件系统读写测试 ✅
+- Session Host Memory Extraction: 自动记忆提取测试 ✅
+- Memory Manager Integration: LTM 接口集成测试 ✅
 

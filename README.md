@@ -52,9 +52,9 @@ Agent Kernel 是一个多层级智能体原语编排系统，专注于上下文�
 | Scheduler | ✅ 完整 | 智能体线程调度基础设施 |
 | Atomic Agent Thread | ✅ 完整 | Event Log + Working Set 架构 |
 | Context Compilers | ✅ 完整 | Master/Process/Compiler Agent |
-| Prime Personality | 🔄 占位 | 基础 mock 实现，需完善 |
-| Session Host | 🔄 占位 | 基础实现，需完善 |
-| Memory Base | ⏳ 未实现 | 长期记忆层（架构已定） |
+| Prime Personality | ✅ 完整 | 集成 Master Compiler 上下文，支持 LLM |
+| Session Host | ✅ 完整 | 任务编排 + 长期记忆管理 |
+| Memory Base | ✅ 基础 | 文件系统长期记忆存储 |
 | Multi-Agent Collaboration | ⏳ 未实现 | 多智能体协作（未来增强） |
 
 **测试状态**: ✅ 117/117 测试通过 (100%)
@@ -150,7 +150,27 @@ agent-kernel/
 - **Compiler Agent**: 带探索能力的高级编译器
 - **Compilation Auditor**: 质量保证与验证
 
-### 3. Gateway
+### 3. Prime Personality
+
+主人格层，负责将用户请求转换为结构化中间表示：
+
+- 集成 Master Compiler 提供的预编译上下文
+- 利用意图分析和置信度评分进行决策
+- 消费 Agent 探索收集的 Artifacts（复杂查询）
+- 基于规则编译或 Agent 辅助编译的上下文生成 IR
+- 支持通过 `force_mock` 元数据进行测试
+
+### 4. Session Host
+
+会话级智能体，负责任务编排和长期记忆管理：
+
+- 管理任务生命周期和流程执行
+- **Host 级长期记忆管理**（不由 Agent Thread 管理）
+- 自动从任务结果中提取记忆候选
+- 支持按会话、类别、重要性查询长期记忆
+- 通过 `extract_and_submit_memories()` 在任务完成后提取记忆
+
+### 5. Gateway
 
 基于文件系统邮箱的轻量级网关：
 
@@ -232,9 +252,10 @@ mypy .                     # 类型检查
 - [x] Atomic Agent Thread 完整实现
 - [x] Context Compilers 完整实现
 - [x] 全要素流程测试
-- [ ] Prime Personality 完整实现
-- [ ] Session Host 完整实现
-- [ ] Memory Base 长期记忆层
+- [x] Prime Personality 完整实现（集成 Master Compiler 上下文）
+- [x] Session Host 完整实现（长期记忆管理）
+- [x] Memory Base 基础实现（文件系统长期记忆存储）
+- [ ] 长期记忆检索与利用（会话启动时加载）
 - [ ] 多智能体协作能力
 - [ ] 可视化监控仪表板
 
@@ -248,4 +269,4 @@ mypy .                     # 类型检查
 
 ---
 
-**注意**: 当前 Prime Personality 和 Session Host 仍为 PLACEHOLDER 实现，需根据架构文档完善。Context Compilers 和 Atomic Agent Thread 已实现完整功能（测试覆盖率 100%）。
+**状态**: 核心功能完整实现。Prime Personality 集成 Master Compiler 上下文，Session Host 实现长期记忆管理。系统可进行全要素端到端测试。

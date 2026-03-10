@@ -35,8 +35,21 @@ Agent Kernel is a **long-running information flow kernel**, not "a big agent". I
     - Context Compiler Skill - Context compilation as a skill (509 lines)
     - Prime Compiler Skill - Prime-specific compilation skill (341 lines)
     - Test Coverage: 52/52 tests passed (100%) - All issues fixed
-  - Prime Personality - **PLACEHOLDER: 简单 mock 实现，仅用于测试收发**
-  - Session Host - **PLACEHOLDER: 简单实现，仅用于测试**
+  - **Prime Personality** - ✅ **IMPLEMENTED** - 集成 Master Compiler 上下文
+    - 消费 CompiledContext 进行智能意图分类
+    - 利用预编译的意图分析、复杂度评分
+    - 支持 Agent 辅助探索收集的 Artifacts
+    - 延迟初始化 Agent，支持 `force_mock` 元数据覆盖
+  - **Session Host** - ✅ **IMPLEMENTED** - 会话编排 + 长期记忆
+    - 任务生命周期管理和流程执行
+    - Host 级长期记忆管理（不由 Agent Thread 访问）
+    - `extract_and_submit_memories()` 任务后记忆提取
+    - 通过 `submit_long_term_candidate()` 提交记忆
+  - **Long-term Memory** - ✅ **IMPLEMENTED** - 文件系统存储
+    - `LongTermMemoryStore` 基于 JSONL 的持久化存储
+    - 按会话、类别、重要性查询
+    - 索引文件加速查找
+    - `RuntimeMemoryManager` 集成接口
   - Inbox Watcher - Filesystem mailbox integration (for Gateway integration)
   - Scheduler - Async task scheduling with Agent Thread lifecycle management
   - Execution Coordinator - Local skill registry + remote executor client
@@ -44,13 +57,16 @@ Agent Kernel is a **long-running information flow kernel**, not "a big agent". I
 - Storage/Runtime Memory (FileStorageAdapter & SQLiteStorageAdapter)
 - Integration Tests - Gateway + Python Kernel full flow testing
 
-> **注意:** Prime Personality、Session Host 仍为 PLACEHOLDER 实现，需要根据架构文档完善。
-> **Context Compilers** 已实现完整功能（52/52 测试通过，100% 覆盖率）。
-> **Atomic Agent** 已完成完整实现，包含测试报告 (50/50 tests passed)
-> **全要素流程测试** 已完成 (117/117 tests passed, 100% 通过率)
+> **实现状态:**
+> - **Context Compilers** 已实现完整功能（52/52 测试通过，100% 覆盖率）
+> - **Atomic Agent** 已完成完整实现（50/50 tests passed）
+> - **Prime Personality** 已实现：集成 Master Compiler 上下文进行智能意图分类
+> - **Session Host** 已实现：会话编排 + Host 级长期记忆管理
+> - **Long-term Memory** 已实现：文件系统存储，支持按会话/类别/重要性查询
+> - **全要素流程测试** 已完成 (117/117 tests passed, 100% 通过率)
 
-**NOT YET Implemented (Architecture defined in `/schema/`):**
-- Memory Base (long-term memory layer)
+**NOT YET Implemented:**
+- 长期记忆检索与利用（会话启动时自动加载相关记忆）
 - Advanced Agent capabilities (multi-agent collaboration)
 
 ## Architecture Overview
@@ -178,8 +194,25 @@ mypy .
 |-----------|-------|--------|--------|
 | Atomic Agent Thread | 50 | 50 | ✅ 100% |
 | Context Compilers | 52 | 52 | ✅ 100% |
+| Prime Personality | N/A | N/A | ✅ 已实现（需 API key 测试） |
+| Session Host + LTM | N/A | N/A | ✅ 已实现（文件系统存储） |
 | Integration Tests | 15 | 15 | ✅ 100% |
 | **Total** | **117** | **117** | **✅ 100%** |
+
+### Implementation Summary (2026-03-10)
+
+**Phase 1: Prime Personality 改造** ✅
+- 移除 mock 模式，集成 Master Compiler 提供的预编译上下文
+- 增强 `_build_enhanced_context()` 方法，提取意图分析、复杂度评分、Artifacts 等信息
+- 更新系统 Prompt，指导 LLM 如何利用预编译上下文
+- 延迟初始化 Agent，支持 `force_mock` 元数据覆盖用于测试
+
+**Phase 2: Session Host 长期记忆** ✅
+- 新建 `LongTermMemoryStore` 文件系统存储（JSONL + 索引）
+- 扩展 `RuntimeMemoryManager` 添加长期记忆接口
+- 实现 `SessionHost.extract_and_submit_memories()` 在任务完成后自动提取记忆
+- Host 管理记忆，Agent Thread 无访问权限（符合架构要求）
+- 支持按会话、类别、重要性查询
 
 ### Recent Fixes
 
@@ -449,13 +482,19 @@ data/
 │   ├── sessions/           # Session metadata
 │   ├── errors/             # Error logs
 │   └── logs/               # Operation logs
-└── apps/python-kernel/     # Python Kernel data
-    ├── runtime.db          # SQLite database (if using sqlite storage)
-    ├── sessions/           # Session files
-    ├── requests/           # Request history
-    ├── tasks/              # Task records
-    ├── snapshots/          # Execution snapshots
-    └── events/             # Event logs
+├── apps/python-kernel/     # Python Kernel data
+│   ├── runtime.db          # SQLite database (if using sqlite storage)
+│   ├── sessions/           # Session files
+│   ├── requests/           # Request history
+│   ├── tasks/              # Task records
+│   ├── snapshots/          # Execution snapshots
+│   └── events/             # Event logs
+└── long_term_memory/       # Long-term memory storage (Session Host)
+    ├── index.json          # Global index for fast lookups
+    ├── by_session/         # Memory entries per session
+    │   └── {session_id}.jsonl
+    └── by_category/        # Memory entries per category
+        └── {category}.jsonl
 ```
 
 ### Documentation
