@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  agent-kernel:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: agent-kernel:latest
+    container_name: agent-kernel
+    restart: unless-stopped
+    
+    # Port mappings
+    ports:
+      - "3000:3000"  # Gateway HTTP API
+      - "8000:8000"  # Python Kernel HTTP API (for debugging)
+    
+    # Environment variables
+    environment:
+      # Core settings
+      - NODE_ENV=production
+      - LOG_LEVEL=INFO
+      
+      # Data paths (internal to container)
+      - DATA_PATH=/app/data
+      - GATEWAY_STORAGE_PATH=/app/data/gateway
+      
+      # Service URLs (internal communication)
+      - GATEWAY_URL=http://localhost:3000
+      - PYTHON_KERNEL_URL=http://localhost:8000
+      
+      # Polling intervals
+      - INBOX_POLL_INTERVAL=1.0
+      - SCHEDULER_CHECK_INTERVAL=60
+      
+      # LLM Configuration (loaded from .env file)
+      - LLM_PROVIDER=${LLM_PROVIDER:-ark}
+      - ARK_API_KEY=${ARK_API_KEY:-}
+      - ARK_BASE_URL=${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      - ARK_MODEL=${ARK_MODEL:-glm-4-7-251222}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-}
+      - LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.7}
+      - LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-4000}
+      
+      # Run mode
+      - KERNEL_RUN_MODE=${KERNEL_RUN_MODE:-real}
+    
+    # Data persistence using named volume
+    volumes:
+      - agent-kernel-data:/app/data
+      - agent-kernel-logs:/var/log/supervisor
+      - /etc/localtime:/etc/localtime:ro  # Sync timezone with host
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    # Resource limits (adjust as needed)
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+        labels: "service"
+        env: "NODE_ENV"
+
+# Named volumes for data persistence
+volumes:
+  agent-kernel-data:
+    driver: local
+  agent-kernel-logs:
+    driver: local
+
+# Network configuration (optional)
+networks:
+  default:
+    name: agent-kernel-network
