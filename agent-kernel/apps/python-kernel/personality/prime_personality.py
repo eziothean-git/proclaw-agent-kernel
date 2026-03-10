@@ -3,14 +3,12 @@ Prime Personality - Stateless orchestration layer.
 Converts user requests into structured intermediate representations.
 """
 import json
-import os
 from typing import Any
 
 import structlog
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
 
+from llm_client import get_llm_client, LLMClient
 from schemas.models import IntermediateRepresentation, Request
 
 logger = structlog.get_logger()
@@ -55,22 +53,22 @@ Output a JSON structure with:
 class PrimePersonality:
     def __init__(self, config: PrimePersonalityConfig | None = None):
         self.config = config or PrimePersonalityConfig()
-        self._agent: Agent | None = None
+        self._client: LLMClient | None = None
 
     @property
-    def agent(self) -> Agent:
-        """Lazy initialization of the agent."""
-        if self._agent is None:
-            self._agent = self._create_agent()
-        return self._agent
+    def client(self) -> LLMClient:
+        """Lazy initialization of the LLM client."""
+        if self._client is None:
+            self._client = self._create_client()
+        return self._client
 
-    def _create_agent(self) -> Agent:
-        model = OpenAIModel(self.config.model_name)
-        return Agent(
-            model=model,
-            system_prompt=self.config.system_prompt,
-            result_type=IntermediateRepresentation,
-        )
+    def _create_client(self) -> LLMClient:
+        """Create and initialize LLM client."""
+        client = get_llm_client()
+        success = client.initialize(system_prompt=self.config.system_prompt)
+        if not success:
+            raise RuntimeError("Failed to initialize LLM client. Check your API configuration.")
+        return client
 
     async def process_request(
         self,
@@ -84,28 +82,47 @@ class PrimePersonality:
             has_compiled_context=session_context is not None,
         )
 
-        # Check for explicit mock override in metadata
-        metadata = request.metadata or {}
-        if metadata.get("force_mock"):
-            logger.warning("Force mock mode enabled via metadata", request_id=request.id)
-            return self._build_mock_ir(request)
-
         context = self._build_enhanced_context(request, session_context)
-        result = await self.agent.run(
-            user_prompt=context,
-            model_settings={
-                "temperature": self.config.temperature,
-                "max_tokens": self.config.max_tokens,
-            },
-        )
-
-        logger.info(
-            "Generated intermediate representation",
-            request_id=request.id,
-            intent=result.data.intent,
-            process_count=len(result.data.processes),
-        )
-        return result.data
+        
+        try:
+            # Use unified LLM client
+            result_text = await self.client.generate(context)
+            
+            # Parse JSON result
+            result_data = json.loads(result_text)
+            
+            # Create IntermediateRepresentation
+            ir = IntermediateRepresentation(
+                request_id=request.id,
+                intent=result_data.get("intent", "execute"),
+                goals=result_data.get("goals", []),
+                processes=result_data.get("processes", []),
+                context_hints=result_data.get("context_hints", {}),
+            )
+            
+            logger.info(
+                "Generated intermediate representation",
+                request_id=request.id,
+                intent=ir.intent,
+                process_count=len(ir.processes),
+            )
+            return ir
+            
+        except json.JSONDecodeError as e:
+            logger.error(
+                "Failed to parse LLM response as JSON",
+                request_id=request.id,
+                error=str(e),
+                response=result_text[:500] if 'result_text' in locals() else "N/A",
+            )
+            raise RuntimeError(f"LLM returned invalid JSON: {e}")
+        except Exception as e:
+            logger.error(
+                "Failed to process request",
+                request_id=request.id,
+                error=str(e),
+            )
+            raise
 
     def _build_enhanced_context(self, request: Request, compiled_context: Any | None) -> str:
         """Build enhanced context using pre-compiled information from Master Compiler."""
@@ -124,121 +141,67 @@ class PrimePersonality:
                 # Add intent analysis if available
                 if 'analysis' in session_ctx:
                     analysis = session_ctx['analysis']
-                    context_parts.append("\n## Intent Analysis (from Master Compiler)")
+                    context_parts.append(f"\nPre-compiled Intent Analysis:")
                     if isinstance(analysis, dict):
-                        if 'intent' in analysis:
-                            intent = analysis['intent']
-                            if isinstance(intent, dict):
-                                if 'detected_intents' in intent:
-                                    context_parts.append(f"- Detected Intents: {', '.join(intent['detected_intents'])}")
-                                if 'confidence' in intent:
-                                    context_parts.append(f"- Confidence: {intent['confidence']:.2f}")
-                                if 'primary_intent' in intent:
-                                    context_parts.append(f"- Primary Intent: {intent['primary_intent']}")
+                        if 'primary_intent' in analysis:
+                            context_parts.append(f"- Primary Intent: {analysis['primary_intent']}")
+                        if 'confidence' in analysis:
+                            context_parts.append(f"- Confidence: {analysis['confidence']}")
+                        if 'keywords' in analysis:
+                            context_parts.append(f"- Keywords: {', '.join(analysis['keywords'])}")
                         if 'complexity_score' in analysis:
-                            context_parts.append(f"- Complexity Score: {analysis['complexity_score']:.2f}")
+                            context_parts.append(f"- Complexity Score: {analysis['complexity_score']}")
 
-                # Add session information
-                if 'session' in session_ctx:
-                    session = session_ctx['session']
-                    if isinstance(session, dict) and session.get('task_count', 0) > 0:
-                        context_parts.append(f"\n## Session Context")
-                        context_parts.append(f"- Task Count: {session.get('task_count', 0)}")
-                        if 'history_summary' in session:
-                            context_parts.append(f"- History: {json.dumps(session['history_summary'], ensure_ascii=False)}")
+                # Add session history summary if available
+                if 'recent_messages' in session_ctx and session_ctx['recent_messages']:
+                    context_parts.append(f"\nSession History:")
+                    recent = session_ctx['recent_messages']
+                    if isinstance(recent, list) and len(recent) > 0:
+                        # Only include last 3 messages to avoid context overflow
+                        for msg in recent[-3:]:
+                            if isinstance(msg, dict):
+                                role = msg.get('role', 'unknown')
+                                content = msg.get('content', '')
+                                context_parts.append(f"- [{role}]: {content[:100]}...")
 
-                # Add gathered artifacts from agent-assisted exploration
-                if 'gathered_artifacts' in session_ctx:
-                    artifacts = session_ctx['gathered_artifacts']
-                    if artifacts:
-                        context_parts.append("\n## Gathered Artifacts (from Agent Exploration)")
-                        for i, artifact in enumerate(artifacts[:5], 1):  # Limit to 5 artifacts
+                # Add gathered artifacts if available (from agent-assisted exploration)
+                if 'artifacts' in session_ctx and session_ctx['artifacts']:
+                    context_parts.append(f"\nGathered Artifacts:")
+                    artifacts = session_ctx['artifacts']
+                    if isinstance(artifacts, list):
+                        for artifact in artifacts[:5]:  # Limit to 5 artifacts
                             if isinstance(artifact, dict):
-                                slot_type = artifact.get('slot_type', 'unknown')
-                                content = artifact.get('content', '')
-                                priority = artifact.get('priority', 0)
-                                context_parts.append(f"{i}. [{slot_type}] (priority: {priority}): {content[:200]}{'...' if len(content) > 200 else ''}")
+                                name = artifact.get('name', 'unnamed')
+                                content_preview = str(artifact.get('content', ''))[:50]
+                                context_parts.append(f"- {name}: {content_preview}...")
 
-                # Add files explored
-                if 'files_explored' in session_ctx:
-                    files = session_ctx['files_explored']
-                    if files:
-                        context_parts.append("\n## Files Explored")
-                        for f in files[:10]:  # Limit to 10 files
-                            context_parts.append(f"- {f}")
+                # Add explored files if available
+                if 'explored_files' in session_ctx and session_ctx['explored_files']:
+                    context_parts.append(f"\nExplored Files:")
+                    files = session_ctx['explored_files']
+                    if isinstance(files, list):
+                        for file_info in files[:10]:  # Limit to 10 files
+                            if isinstance(file_info, dict):
+                                path = file_info.get('path', 'unknown')
+                                file_type = file_info.get('type', 'file')
+                                context_parts.append(f"- {path} ({file_type})")
 
-                # Add compilation metadata
-                if 'metadata' in session_ctx:
-                    metadata = session_ctx['metadata']
-                    if isinstance(metadata, dict):
-                        if metadata.get('agent_assisted'):
-                            context_parts.append("\n## Compilation Method")
-                            context_parts.append("- Agent-assisted compilation was used (complex or cross-session query)")
-                            if 'patch_steps' in metadata:
-                                context_parts.append(f"- Exploration Steps: {metadata['patch_steps']}")
-                            if 'patch_confidence' in metadata:
-                                context_parts.append(f"- Exploration Confidence: {metadata['patch_confidence']}")
-                        elif metadata.get('rule_based'):
-                            context_parts.append("\n## Compilation Method")
-                            context_parts.append("- Rule-based compilation was used (standard query)")
+        context_parts.extend([
+            "\nAnalyze the user request and output a JSON structure with:",
+            "- intent: High-level classification (e.g., 'file_operation', 'code_generation', 'analysis')",
+            "- goals: List of objectives to accomplish",
+            "- processes: Array of process definitions, each with:",
+            "  * name: Process name",
+            "  * goal: Specific goal for this process",
+            "  * capabilities: List of required skills (e.g., ['fs-skill', 'shell-skill'])",
+            "  * constraints: List of constraints (e.g., ['max_steps: 10'])",
+            "  * security_level: 'low', 'medium', or 'high'",
+            "- context_hints: Additional context for compilation",
+            "",
+            "Use the pre-compiled context above to make better decisions about intent classification and task decomposition.",
+        ])
 
-        context_parts.append("""
-
-## Instructions
-
-Based on the pre-compiled context above, analyze the user request and generate a structured intermediate representation.
-
-The pre-compiled context includes:
-- Intent analysis (confidence scores, detected intents)
-- Session history (if available)
-- Gathered artifacts from agent exploration (for complex queries)
-- Files explored (relevant context discovered)
-
-Use this information to:
-1. Refine your intent classification (trust high-confidence pre-analysis)
-2. Consider gathered artifacts for task decomposition
-3. Identify required capabilities based on files explored
-4. Set appropriate security levels
-
-Provide a structured JSON response matching the IntermediateRepresentation schema.
-""")
         return "\n".join(context_parts)
-
-    def _build_mock_ir(self, request: Request) -> IntermediateRepresentation:
-        metadata = request.metadata or {}
-        if isinstance(metadata.get("mock_ir"), dict):
-            payload = dict(metadata["mock_ir"])
-            payload.setdefault("request_id", request.id)
-            payload.setdefault("context_hints", {})
-            return IntermediateRepresentation(**payload)
-
-        message = request.message.lower()
-        capabilities = []
-        if any(token in message for token in ["file", "文件", "目录", "read", "write", "list"]):
-            capabilities.append("fs-skill")
-        if any(token in message for token in ["shell", "命令", "command", "bash", "exec"]):
-            capabilities.append("shell-skill")
-        if not capabilities:
-            capabilities = ["fs-skill", "shell-skill"]
-
-        return IntermediateRepresentation(
-            request_id=request.id,
-            intent="mock_execute",
-            goals=[request.message],
-            processes=[
-                {
-                    "name": "mock-process",
-                    "goal": request.message,
-                    "capabilities": capabilities,
-                    "constraints": ["Use only explicitly allowed capabilities"],
-                    "security_level": "medium",
-                }
-            ],
-            context_hints={
-                "request_metadata": metadata,
-                "mode": "mock",
-            },
-        )
 
 
 _prime_personality: PrimePersonality | None = None

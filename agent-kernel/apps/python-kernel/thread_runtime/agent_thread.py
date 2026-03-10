@@ -83,20 +83,16 @@ class AgentThread:
             thread_id=self.thread_id,
             task_id=task.id,
         )
-        
-        # LLM client (optional, for real mode)
-        self.run_mode = os.environ.get("KERNEL_RUN_MODE", "mock")
-        self.agent = None
-        if self.run_mode == "real":
-            self.agent = self._create_agent()
-        
+
+        # Initialize LLM client
+        self.agent = self._create_agent()
+
         # Register with OS interface for monitoring/control
         self._register_with_os_interface()
-        
+
         self.logger.info(
             "Agent Thread initialized",
             phase=self.current_phase.value,
-            run_mode=self.run_mode,
         )
     
     def _parse_max_steps(self, constraints: list[str]) -> int:
@@ -291,40 +287,19 @@ success: true | false
         )
     
     async def _generate_action(self, working_set: WorkingSet) -> str:
-        """Generate action using LLM or mock."""
+        """Generate action using LLM."""
         prompt = working_set.to_prompt()
-        
-        if self.run_mode == "real" and self.agent:
-            try:
-                # Use LLMClient.generate() method
-                result = await self.agent.generate(prompt)
-                return result
-            except Exception as e:
-                self.logger.error("LLM call failed", error=str(e))
-                return self._generate_mock_action(working_set)
-        else:
-            return self._generate_mock_action(working_set)
-    
-    def _generate_mock_action(self, working_set: WorkingSet) -> str:
-        """Generate mock action for testing."""
-        # Check if we have mock tool calls in context
-        mock_tool_call = self.compiled_context.session_context.get("mock_tool_call")
-        if mock_tool_call and self.step_count == 1:
-            return f"""```yaml
-intent: tool_call
-reasoning: "Mock tool call for testing"
-tool_calls:
-  - skill: {mock_tool_call.get("skill_name", "fs-skill")}
-    tool: {mock_tool_call.get("tool_name", "list_directory")}
-    parameters: {mock_tool_call.get("parameters", {})}
-```"""
-        
-        # Default: return final answer
-        return f"""```yaml
-intent: final_answer
-answer: "Mock execution completed for task: {self.compiled_context.task_goal}"
-success: true
-```"""
+
+        if self.agent is None:
+            raise RuntimeError("LLM agent not initialized. Cannot generate action.")
+
+        try:
+            # Use LLMClient.generate() method
+            result = await self.agent.generate(prompt)
+            return result
+        except Exception as e:
+            self.logger.error("LLM call failed", error=str(e))
+            raise
     
     async def _handle_tool_calls(self, parsed: Any) -> None:
         """Execute tool calls via coordinator."""

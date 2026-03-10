@@ -1,0 +1,16 @@
+{
+  "id": "74010889-d7db-4603-a62d-3964890045f7",
+  "session_id": "sess_1773137756851_362j06h7w",
+  "user_id": "unknown",
+  "message": "测试🎉 Emoji Ñoño 中文",
+  "status": "failed",
+  "created_at": "2026-03-10T11:42:52.341350",
+  "processed_at": "2026-03-10T11:42:52.364607",
+  "completed_at": "2026-03-10T11:42:52.365809",
+  "metadata": {
+    "platform": "http",
+    "device_id": "http-194827",
+    "source_ip": null,
+    "client_version": null
+  }
+}

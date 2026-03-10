@@ -98,8 +98,7 @@ class IntegrationTest:
             
             # Phase 4: Agent Thread Execution
             await self.test_agent_thread_creation()
-            await self.test_agent_thread_mock_execution()
-            
+
             # Phase 5: Intervention APIs
             await self.test_scheduler_intervention()
             
@@ -391,7 +390,6 @@ success: true
                 session_context={
                     "session_id": task.session_id,
                     "request_id": "req_001",
-                    "mock_tool_call": None,
                 },
                 task_goal=task.goal,
                 constraints=task.constraints,
@@ -419,77 +417,7 @@ success: true
             print_test("Agent Thread Creation", False, str(e))
             import traceback
             traceback.print_exc()
-    
-    async def test_agent_thread_mock_execution(self):
-        """Test 8: Agent Thread Mock Execution"""
-        print_header("TEST 8: Agent Thread Mock Execution")
-        
-        try:
-            if not self.agent:
-                print_test("Agent not created (skipped)", False)
-                return
-            
-            # Set mock mode
-            os.environ["KERNEL_RUN_MODE"] = "mock"
-            
-            # Create agent with mock tool call
-            task = TaskSnapshot(
-                id=f"test_task_{uuid4().hex[:8]}",
-                session_id="test_session",
-                process_id="test_process",
-                status=TaskStatus.IDLE,
-                goal="List files in /tmp",
-                constraints=["max_steps: 3"],
-                allowed_capabilities=["fs-skill"],
-            )
-            
-            context = CompiledContext(
-                task_id=task.id,
-                session_context={
-                    "session_id": task.session_id,
-                    "request_id": "req_001",
-                    "mock_tool_call": {
-                        "skill_name": "fs-skill",
-                        "tool_name": "list_directory",
-                        "parameters": {"path": "/tmp"},
-                    },
-                },
-                task_goal=task.goal,
-                constraints=task.constraints,
-                allowed_capabilities=task.allowed_capabilities,
-                forbidden_capabilities=[],
-            )
-            
-            agent = AgentThread(
-                task=task,
-                compiled_context=context,
-                coordinator=get_execution_coordinator(),
-                ws_builder=WorkingSetBuilder(),
-            )
-            
-            # Execute
-            result = await agent.run()
-            
-            print_test("Execution completed", result is not None)
-            print_test("Has task_id", result.task_id == task.id)
-            print_test("Has content", len(result.content) > 0)
-            
-            # Check Event Log
-            event_count = agent.event_log.get_count()
-            print_test(f"Event log has entries ({event_count})", event_count > 0)
-            
-            # Check log export
-            log_export = agent.get_event_log_export()
-            print_test("Can export event log", log_export is not None)
-            print_test("Log has thread info", "thread_id" in log_export)
-            
-        except Exception as e:
-            print_test("Agent Thread Execution", False, str(e))
-            import traceback
-            traceback.print_exc()
-        finally:
-            os.environ["KERNEL_RUN_MODE"] = "real"
-    
+
     async def test_scheduler_intervention(self):
         """Test 9: Scheduler Intervention APIs"""
         print_header("TEST 9: Scheduler Intervention APIs")

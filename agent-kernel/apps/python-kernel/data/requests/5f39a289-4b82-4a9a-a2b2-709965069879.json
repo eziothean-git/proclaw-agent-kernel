@@ -1,0 +1,16 @@
+{
+  "id": "5f39a289-4b82-4a9a-a2b2-709965069879",
+  "session_id": "sess_1773137756851_362j06h7w",
+  "user_id": "unknown",
+  "message": "并发请求 3",
+  "status": "failed",
+  "created_at": "2026-03-10T11:42:52.341799",
+  "processed_at": "2026-03-10T11:42:52.369902",
+  "completed_at": "2026-03-10T11:42:52.370956",
+  "metadata": {
+    "platform": "http",
+    "device_id": "http-194827",
+    "source_ip": null,
+    "client_version": null
+  }
+}

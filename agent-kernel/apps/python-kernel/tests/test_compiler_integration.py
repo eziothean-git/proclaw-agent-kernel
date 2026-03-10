@@ -1,7 +1,7 @@
 """
 Integration tests for ProcessContextCompilerAgent.
 
-These tests verify the end-to-end compilation flow using mock LLM mode.
+These tests verify the end-to-end compilation flow.
 """
 import json
 import os
@@ -10,9 +10,6 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch, AsyncMock
-
-# Set mock mode before importing
-os.environ["KERNEL_RUN_MODE"] = "mock"
 
 from schemas.models import (
     IntermediateRepresentation,
@@ -160,14 +157,14 @@ class TestProcessContextCompilerIntegration:
         assert len(agent.artifact_slots) == 0
     
     @pytest.mark.asyncio
-    async def test_compiler_agent_run_mock_mode(
+    async def test_compiler_agent_run(
         self,
         sample_process_definition,
         sample_intermediate_repr,
         sample_session_context,
         sample_task_snapshots,
     ):
-        """Test compiler agent execution in mock mode."""
+        """Test compiler agent execution."
         agent = ProcessContextCompilerAgent(
             target_task_id="task_target",
             process_definition=sample_process_definition,
@@ -356,89 +353,6 @@ class TestCompilerAgentExplorationCapabilities:
         
         assert result["success"] is True
 
-
-class TestCompilerWithMockLLM:
-    """Tests specifically for mock LLM mode behavior."""
-    
-    def test_mock_mode_environment(self):
-        """Verify we're running in mock mode."""
-        assert os.environ.get("KERNEL_RUN_MODE") == "mock"
-    
-    @pytest.mark.asyncio
-    async def test_mock_action_generation(self):
-        """Test that mock actions are generated correctly."""
-        agent = ProcessContextCompilerAgent(
-            target_task_id="test",
-            process_definition={"goal": "test", "capabilities": []},
-            intermediate_repr=IntermediateRepresentation(
-                request_id="req",
-                intent="test",
-                goals=[],
-                processes=[],
-            ),
-            session_context={"session_id": "sess"},
-        )
-        
-        # Generate mock action
-        from thread_runtime.models import WorkingSet
-        working_set = WorkingSet(
-            task_id="test",
-            task_goal="test goal",
-            current_phase=Phase.EXPLORE,
-            step_number=1,
-        )
-        
-        output = agent._generate_mock_action(working_set)
-        
-        # Should return YAML format
-        assert "intent:" in output
-        assert "answer:" in output
-    
-    @pytest.mark.asyncio
-    async def test_complete_compilation_flow_mock(self):
-        """Test complete compilation flow with mock LLM."""
-        process_def = {
-            "name": "integration_test",
-            "goal": "Test complete compilation flow",
-            "capabilities": ["fs-skill"],
-        }
-        
-        intermediate = IntermediateRepresentation(
-            request_id="integration_req",
-            intent="test",
-            goals=["Test compilation"],
-            processes=[process_def],
-            context_hints={"constraints": ["Test constraint"]},
-        )
-        
-        session_ctx = {
-            "session_id": "integration_sess",
-            "user_id": "integration_user",
-            "request_id": "integration_req",
-        }
-        
-        compiler = ProcessContextCompiler()
-        
-        result = compiler.compile_task_context(
-            task_id="integration_task",
-            process_definition=process_def,
-            intermediate_repr=intermediate,
-            session_context=session_ctx,
-            task_snapshots=[],
-        )
-        
-        # Verify the result
-        assert isinstance(result, CompiledContext)
-        assert result.task_id == "integration_task"
-        assert result.task_goal == "Test complete compilation flow"
-        
-        # Check that constraints from IR were included
-        assert "Test constraint" in result.constraints
-        
-        # Check metadata
-        assert "compilation_steps" in result.metadata
-        print(f"✓ Compilation completed with {result.metadata['compilation_steps']} steps")
-        print(f"✓ Artifacts gathered: {result.metadata['artifacts_gathered']}")
 
 
 if __name__ == "__main__":

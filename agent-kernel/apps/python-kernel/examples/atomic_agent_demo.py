@@ -45,7 +45,6 @@ async def example_usage():
             "session_id": task.session_id,
             "user_id": "user_001",
             "request_id": "req_001",
-            "mock_tool_call": None,  # No mock tool call for demo
         },
         task_goal=task.goal,
         constraints=["max_steps: 10"],  # List of constraint strings

@@ -119,7 +119,7 @@ async def health_check():
     components = {
         "storage": "connected",
         "scheduler": "running",
-        "run_mode": os.environ.get("KERNEL_RUN_MODE", "real"),
+        "mode": "production",
         "scheduled_dispatcher": "running" if _scheduled_dispatcher and _scheduled_dispatcher._running else "stopped",
     }
     
