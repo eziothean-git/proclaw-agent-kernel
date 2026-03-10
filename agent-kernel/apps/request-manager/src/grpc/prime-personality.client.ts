@@ -64,6 +64,23 @@ export class PrimePersonalityClient implements OnModuleInit {
       throw new Error('gRPC client not initialized');
     }
 
+    // Validate timeoutMs to prevent "Invalid time value" error
+    const validTimeoutMs = typeof timeoutMs === 'number' && !isNaN(timeoutMs) && timeoutMs > 0
+      ? timeoutMs
+      : 120000; // Default 2 minutes
+
+    const deadline = new Date(Date.now() + validTimeoutMs);
+
+    // Validate deadline is a valid date
+    if (isNaN(deadline.getTime())) {
+      this.logger.error(`Invalid deadline calculated: timeoutMs=${timeoutMs}, now=${Date.now()}`);
+      throw new Error('Invalid deadline: unable to calculate valid timeout');
+    }
+
+    // Convert Date to protobuf Timestamp format
+    const deadlineSeconds = Math.floor(deadline.getTime() / 1000);
+    const deadlineNanos = (deadline.getTime() % 1000) * 1000000;
+
     const request = {
       requestId: task.requestId,
       sessionId: task.sessionId,
@@ -78,8 +95,11 @@ export class PrimePersonalityClient implements OnModuleInit {
         contextMetadata: task.metadata,
       },
       metadata: task.metadata,
-      timeoutMs: timeoutMs,
-      deadline: new Date(Date.now() + timeoutMs).toISOString(),
+      timeoutMs: validTimeoutMs,
+      deadline: {
+        seconds: deadlineSeconds.toString(),
+        nanos: deadlineNanos,
+      },
     };
 
     return new Promise((resolve, reject) => {

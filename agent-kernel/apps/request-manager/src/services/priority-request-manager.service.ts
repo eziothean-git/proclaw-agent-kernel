@@ -120,12 +120,23 @@ export class PriorityRequestManagerService implements OnModuleInit, OnApplicatio
       completedAt: new Date(),
     });
 
-    // 记录成功
+    // 记录成功 - 防御性日期检查
+    const startedAtMs = task.startedAt?.getTime();
+    const createdAtMs = task.createdAt?.getTime();
+    
+    // Validate dates are valid numbers
+    const processingDurationMs = (startedAtMs && !isNaN(startedAtMs))
+      ? Date.now() - startedAtMs
+      : 0;
+    const totalDurationMs = (createdAtMs && !isNaN(createdAtMs))
+      ? Date.now() - createdAtMs
+      : 0;
+
     await this.auditLogger.logRequestCompleted(
       task.requestId,
       task.sessionId,
-      Date.now() - (task.startedAt?.getTime() || Date.now()),
-      Date.now() - task.createdAt.getTime()
+      processingDurationMs,
+      totalDurationMs
     );
 
     // 保存状态快照

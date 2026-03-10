@@ -1,0 +1,17 @@
+{
+  "id": "0ebbad3c-c581-4391-b366-32d217ecbe02",
+  "session_id": "sess_1773137756851_362j06h7w",
+  "process_id": "9f3ae16d-900e-42a3-9135-26c06f1c2173",
+  "status": "paused",
+  "goal": "Retrieve and display the list of files and directories in the current working directory",
+  "constraints": [],
+  "allowed_capabilities": [
+    "fs-skill"
+  ],
+  "forbidden_capabilities": [],
+  "created_at": "2026-03-10T12:54:35.235179",
+  "started_at": "2026-03-10T12:59:04.277709",
+  "completed_at": null,
+  "output": null,
+  "error": "Task cancelled"
+}

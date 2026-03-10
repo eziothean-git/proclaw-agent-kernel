@@ -39,7 +39,7 @@ class LLMConfig:
                 provider="ark",
                 api_key=os.environ.get("ARK_API_KEY", ""),
                 base_url=os.environ.get("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"),
-                model=os.environ.get("ARK_MODEL", "glm-4.7"),
+                model=os.environ.get("ARK_MODEL", "glm-4-7-251222"),
                 temperature=float(os.environ.get("LLM_TEMPERATURE", "0.7")),
                 max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "4000")),
             )
@@ -188,7 +188,7 @@ def configure_llm(
         provider=provider,
         api_key=api_key,
         base_url=base_url or ("https://ark.cn-beijing.volces.com/api/v3" if provider == "ark" else ""),
-        model=model or ("glm-4.7" if provider == "ark" else "gpt-4"),
+        model=model or ("glm-4-7-251222" if provider == "ark" else "gpt-4"),
         temperature=temperature,
         max_tokens=max_tokens,
     )

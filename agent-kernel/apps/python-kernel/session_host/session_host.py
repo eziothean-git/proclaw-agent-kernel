@@ -86,6 +86,8 @@ class SessionHost:
             "tasks_spawned": len(results),
             "results": results,
             "memory_candidates": len(memory_candidates),
+            "output": aggregated_result["output"],
+            "actions": aggregated_result["actions"],
         }
 
     async def spawn_task(

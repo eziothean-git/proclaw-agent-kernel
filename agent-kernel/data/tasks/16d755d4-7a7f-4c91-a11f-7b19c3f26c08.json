@@ -1,0 +1,21 @@
+{
+  "id": "16d755d4-7a7f-4c91-a11f-7b19c3f26c08",
+  "session_id": "sess_1773137756851_362j06h7w",
+  "process_id": "60d0ba3b-398e-4c32-bf13-c1ed2c85abbc",
+  "status": "paused",
+  "goal": "Execute 3 concurrent network requests and handle responses",
+  "constraints": [
+    "max_concurrent: 3",
+    "timeout: 30s"
+  ],
+  "allowed_capabilities": [
+    "http-skill",
+    "async-execution"
+  ],
+  "forbidden_capabilities": [],
+  "created_at": "2026-03-10T12:59:04.281968",
+  "started_at": "2026-03-10T12:59:05.617582",
+  "completed_at": null,
+  "output": null,
+  "error": "Task cancelled"
+}

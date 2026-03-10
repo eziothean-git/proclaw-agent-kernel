@@ -1,0 +1,10 @@
+{
+  "requestId": "34aa5b5f-f196-4e83-889b-42f8f1bf6a76",
+  "sessionId": "sess_1773147568502_y6e8v0dlo",
+  "userId": "",
+  "priority": 0,
+  "body": "{\"header\":{\"timestamp\":\"2026-03-10T13:02:49.513Z\",\"platform\":\"http\",\"deviceId\":\"http-331771\",\"sessionId\":\"sess_1773147568502_y6e8v0dlo\",\"requestId\":\"34aa5b5f-f196-4e83-889b-42f8f1bf6a76\",\"priority\":0},\"metadata\":{},\"body\":\"你好，请介绍一下你自己\"}",
+  "metadata": {},
+  "receivedAt": "2026-03-10T13:02:49.518Z",
+  "filePath": "data/gateway/request-manager/inbox/2026-03-10/34aa5b5f-f196-4e83-889b-42f8f1bf6a76.json"
+}

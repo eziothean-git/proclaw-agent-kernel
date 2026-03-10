@@ -1,0 +1,21 @@
+{
+  "id": "66e9c8fe-83cd-49c9-b3ec-8d2e3da57186",
+  "session_id": "sess_1773137756851_362j06h7w",
+  "process_id": "24e115df-2ee9-472f-ab81-ca76409a22dc",
+  "status": "failed",
+  "goal": "Generate code or execute 3 concurrent requests with proper error handling and response aggregation",
+  "constraints": [
+    "max_steps: 15",
+    "timeout: 30s"
+  ],
+  "allowed_capabilities": [
+    "code-generation-skill",
+    "http-skill"
+  ],
+  "forbidden_capabilities": [],
+  "created_at": "2026-03-10T12:28:15.936023",
+  "started_at": "2026-03-10T12:29:29.900005",
+  "completed_at": "2026-03-10T12:29:46.964871",
+  "output": "Clarification needed",
+  "error": "Clarification requested"
+}

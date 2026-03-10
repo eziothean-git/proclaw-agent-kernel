@@ -7,8 +7,8 @@ interface KernelCallbackDto {
   request_id: string;
   session_id: string;
   status: 'completed' | 'failed' | 'partial';
-  header: {
-    timestamp: string;
+  header?: {
+    timestamp?: string;
     processing_time_ms?: number;
     model_version?: string;
     compiler_version?: string;
@@ -48,15 +48,16 @@ export class WebhookController {
     this.logger.log(`Received kernel callback for request ${dto.request_id}, status: ${dto.status}`);
 
     try {
-      // Build OutputMessage
+      // Build OutputMessage with safe header access
+      const now = new Date().toISOString();
       const outputMessage: OutputMessage = {
         header: {
           requestId: dto.request_id,
           sessionId: dto.session_id,
-          timestamp: dto.header.timestamp,
-          processingTimeMs: dto.header.processing_time_ms,
-          modelVersion: dto.header.model_version,
-          compilerVersion: dto.header.compiler_version,
+          timestamp: dto.header?.timestamp || now,
+          processingTimeMs: dto.header?.processing_time_ms,
+          modelVersion: dto.header?.model_version,
+          compilerVersion: dto.header?.compiler_version,
         },
         status: dto.status,
         body: dto.body || '',

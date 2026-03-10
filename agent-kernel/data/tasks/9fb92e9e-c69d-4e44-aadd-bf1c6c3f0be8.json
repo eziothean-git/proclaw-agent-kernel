@@ -1,0 +1,15 @@
+{
+  "id": "9fb92e9e-c69d-4e44-aadd-bf1c6c3f0be8",
+  "session_id": "sess_1773137756851_362j06h7w",
+  "process_id": "18ad4c28-1fe8-41cf-be87-6cd203598c7f",
+  "status": "completed",
+  "goal": "Echo back the received test message to confirm proper character handling",
+  "constraints": [],
+  "allowed_capabilities": [],
+  "forbidden_capabilities": [],
+  "created_at": "2026-03-10T12:33:29.893921",
+  "started_at": "2026-03-10T12:34:56.988085",
+  "completed_at": "2026-03-10T12:35:12.313782",
+  "output": "测试🎉 Emoji Ñoño 中文",
+  "error": null
+}

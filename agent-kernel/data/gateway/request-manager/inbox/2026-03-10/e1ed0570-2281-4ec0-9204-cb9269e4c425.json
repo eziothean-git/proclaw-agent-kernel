@@ -1,0 +1,10 @@
+{
+  "requestId": "e1ed0570-2281-4ec0-9204-cb9269e4c425",
+  "sessionId": "sess_1773147080835_w09rulxug",
+  "userId": "",
+  "priority": 0,
+  "body": "{\"header\":{\"timestamp\":\"2026-03-10T12:51:20.836Z\",\"platform\":\"http\",\"deviceId\":\"http-323951\",\"sessionId\":\"sess_1773147080835_w09rulxug\",\"requestId\":\"e1ed0570-2281-4ec0-9204-cb9269e4c425\",\"priority\":0},\"metadata\":{},\"body\":\"你好\"}",
+  "metadata": {},
+  "receivedAt": "2026-03-10T12:51:20.847Z",
+  "filePath": "/home/eziothean/ProClaw/agent-kernel/data/gateway/request-manager/inbox/2026-03-10/e1ed0570-2281-4ec0-9204-cb9269e4c425.json"
+}

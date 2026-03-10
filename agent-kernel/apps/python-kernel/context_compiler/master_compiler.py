@@ -131,8 +131,18 @@ class MasterContextCompiler:
                     max_steps=self.config.max_steps,
                 )
                 
-                # Run agent synchronously (compile() is synchronous)
-                patch = asyncio.run(agent.run())
+                # Run agent - handle both sync and async contexts
+                try:
+                    # Try to get current event loop
+                    loop = asyncio.get_running_loop()
+                    # We're in an async context, use run_coroutine_threadsafe or create_task
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        future = pool.submit(asyncio.run, agent.run())
+                        patch = future.result()
+                except RuntimeError:
+                    # No running loop, use asyncio.run
+                    patch = asyncio.run(agent.run())
                 
                 # Cache the patch if successful
                 if patch.status == "complete" and self.config.enable_caching:

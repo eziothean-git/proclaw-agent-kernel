@@ -199,6 +199,14 @@ export class RequestManagerGrpcServer implements OnModuleInit {
       ? (task.completedAt?.getTime() || now) - task.startedAt.getTime()
       : 0;
 
+    // Convert Date objects to protobuf Timestamp format
+    const startedAtProto = task.startedAt
+      ? { seconds: Math.floor(task.startedAt.getTime() / 1000).toString(), nanos: (task.startedAt.getTime() % 1000) * 1000000 }
+      : undefined;
+    const completedAtProto = task.completedAt
+      ? { seconds: Math.floor(task.completedAt.getTime() / 1000).toString(), nanos: (task.completedAt.getTime() % 1000) * 1000000 }
+      : undefined;
+
     callback(null, {
       requestId: task.requestId,
       sessionId: task.sessionId,
@@ -208,8 +216,8 @@ export class RequestManagerGrpcServer implements OnModuleInit {
       processingTimeMs,
       retryCount: task.retryCount,
       errorMessage: task.errorMessage || '',
-      startedAt: task.startedAt?.toISOString() || '',
-      completedAt: task.completedAt?.toISOString() || '',
+      startedAt: startedAtProto,
+      completedAt: completedAtProto,
     });
   }
 
@@ -310,17 +318,26 @@ export class RequestManagerGrpcServer implements OnModuleInit {
   private async handleGetWorkerStatus(call: any, callback: any): Promise<void> {
     const activeTasks = this.workerPool.getActiveTasks();
     
+    // Convert WorkerState dates to protobuf Timestamp format
+    const workerTasks = activeTasks.map(task => ({
+      taskId: task.taskId,
+      sessionId: task.sessionId,
+      startTime: {
+        seconds: Math.floor(task.startTime.getTime() / 1000).toString(),
+        nanos: (task.startTime.getTime() % 1000) * 1000000,
+      },
+      timeoutAt: {
+        seconds: Math.floor(task.timeoutAt.getTime() / 1000).toString(),
+        nanos: (task.timeoutAt.getTime() % 1000) * 1000000,
+      },
+      retryCount: task.retryCount,
+    }));
+    
     callback(null, {
       maxWorkers: this.workerPool.getMaxWorkers(),
       activeWorkers: this.workerPool.getActiveWorkers(),
       availableSlots: this.workerPool.getAvailableSlots(),
-      activeTasks: activeTasks.map(task => ({
-        taskId: task.taskId,
-        sessionId: task.sessionId,
-        startTime: task.startTime.toISOString(),
-        timeoutAt: task.timeoutAt.toISOString(),
-        retryCount: task.retryCount,
-      })),
+      activeTasks: workerTasks,
     });
   }
 

@@ -20,7 +20,7 @@ class GatewayClient:
     def __init__(
         self,
         base_url: str = "http://localhost:3000",
-        user_id: str = "openclaw-user",
+        user_id: str = "proclaw-user",
         max_retries: int = 5,
         retry_delay: float = 2.0,
     ):
