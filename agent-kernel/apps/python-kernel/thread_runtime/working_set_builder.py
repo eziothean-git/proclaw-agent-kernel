@@ -60,6 +60,9 @@ class WorkingSetBuilder:
     - Artifact slot selection per phase
     - Observation filtering per phase
     - Token budget management
+    
+    Supports dynamic rule modification for high-level agents (e.g., Process Context Compiler)
+    that need to actively participate in context reorganization.
     """
     
     def __init__(self, config_path: str | None = None):
@@ -75,6 +78,15 @@ class WorkingSetBuilder:
         self.artifact_priorities: dict[str, int] = {}
         
         self._parse_config()
+        
+        # Dynamic rule overrides (set by high-level agents like Context Compiler)
+        self._dynamic_max_observations: int | None = None
+        self._artifact_priority_boosts: dict[str, int] = {}
+        self._forced_observations: set[str] = set()  # event_ids to force include
+        self._excluded_observations: set[str] = set()  # event_ids to exclude
+        self._forced_slots: set[str] = set()  # slot_ids to force include
+        self._excluded_slots: set[str] = set()  # slot_ids to exclude
+        self._context_notes: list[str] = []
     
     def _load_config(self, config_path: str | None) -> dict:
         """Load configuration from YAML file."""
@@ -256,6 +268,10 @@ class WorkingSetBuilder:
         # Get previous action result
         previous_result = self._get_previous_result(events)
         
+        # Merge context notes: provided notes + dynamic notes
+        all_context_notes = list(context_notes or [])
+        all_context_notes.extend(self._context_notes)
+        
         # Build Working Set
         working_set = WorkingSet(
             task_id=task_id,
@@ -268,7 +284,7 @@ class WorkingSetBuilder:
             active_artifacts=active_artifacts,
             previous_action_result=previous_result,
             pending_decisions=pending_decisions or [],
-            context_notes=context_notes or [],
+            context_notes=all_context_notes,
         )
         
         # Estimate and validate tokens
@@ -297,22 +313,40 @@ class WorkingSetBuilder:
         artifact_slots: dict[str, ArtifactSlot],
         rule: SlotSelectionRule,
     ) -> dict[str, Any]:
-        """Select artifact slots based on rules."""
+        """Select artifact slots based on rules with dynamic overrides."""
         # Filter by type and priority threshold
         candidates = []
         for slot_id, slot in artifact_slots.items():
+            # Check dynamic exclusions first
+            if slot_id in self._excluded_slots:
+                continue
+            
+            # Check if slot is forced
+            if slot_id in self._forced_slots:
+                candidates.append((slot_id, slot))
+                continue
+            
             # Check if slot type is in allowed types
             if slot.slot_type not in rule.slot_types:
                 continue
             
+            # Calculate effective priority with dynamic boosts
+            effective_priority = slot.priority + self._artifact_priority_boosts.get(slot.slot_type, 0)
+            
             # Check priority threshold
-            if slot.priority < rule.priority_threshold:
+            if effective_priority < rule.priority_threshold:
                 continue
             
             candidates.append((slot_id, slot))
         
-        # Sort by priority (descending)
-        candidates.sort(key=lambda x: x[1].priority, reverse=True)
+        # Sort by priority (descending), forced slots first
+        def sort_key(item):
+            slot_id, slot = item
+            is_forced = slot_id in self._forced_slots
+            effective_priority = slot.priority + self._artifact_priority_boosts.get(slot.slot_type, 0)
+            return (-int(is_forced), -effective_priority)
+        
+        candidates.sort(key=sort_key)
         
         # Take top N
         selected = candidates[:rule.max_slots]
@@ -325,9 +359,12 @@ class WorkingSetBuilder:
         events: list[Event],
         rule: ObservationSelectionRule,
     ) -> list[dict[str, Any]]:
-        """Select recent observations based on rules."""
+        """Select recent observations based on rules with dynamic overrides."""
         if not events:
             return []
+        
+        # Determine max count (dynamic override takes precedence)
+        max_count = self._dynamic_max_observations if self._dynamic_max_observations is not None else rule.max_count
         
         # Determine lookback range
         if rule.lookback_steps is not None:
@@ -336,13 +373,29 @@ class WorkingSetBuilder:
         else:
             recent_events = events
         
-        # Filter by event type priority
-        filtered = []
+        # Separate forced observations
+        forced = []
+        regular = []
+        
         for event in reversed(recent_events):  # Most recent first
+            # Check dynamic exclusions
+            if event.event_id in self._excluded_observations:
+                continue
+            
+            # Check if forced
+            if event.event_id in self._forced_observations:
+                forced.append(event)
+                continue
+            
+            # Regular filtering by event type
             if event.event_type in rule.priority_event_types:
-                filtered.append(event)
-            if len(filtered) >= rule.max_count:
-                break
+                regular.append(event)
+        
+        # Combine: forced observations first, then regular up to max_count
+        filtered = forced + regular[:max(0, max_count - len(forced))]
+        
+        # Limit to max_count
+        filtered = filtered[:max_count]
         
         # Convert to observation format
         observations = []
@@ -421,3 +474,81 @@ class WorkingSetBuilder:
                 "notes": self.token_budget.reserved_for_notes,
             },
         }
+    
+    # ============================================================================
+    # Dynamic Rule Modification (for high-level agents)
+    # ============================================================================
+    
+    def update_max_observations(self, max_count: int) -> None:
+        """
+        Dynamically update the maximum number of observations.
+        
+        Used by Process Context Compiler to adjust context size based on findings.
+        """
+        self._dynamic_max_observations = max_count
+        self.logger.info("Updated max observations dynamically", max_count=max_count)
+    
+    def boost_artifact_priority(self, slot_type: str, boost: int) -> None:
+        """
+        Boost priority for a specific artifact slot type.
+        
+        Args:
+            slot_type: The type of artifact slot to boost
+            boost: Amount to boost (added to base priority)
+        """
+        current = self._artifact_priority_boosts.get(slot_type, 0)
+        self._artifact_priority_boosts[slot_type] = current + boost
+        self.logger.info(
+            "Boosted artifact priority",
+            slot_type=slot_type,
+            boost=boost,
+            new_total=self._artifact_priority_boosts[slot_type],
+        )
+    
+    def force_observation(self, event_id: str) -> None:
+        """Force include a specific observation by event_id."""
+        self._forced_observations.add(event_id)
+        self.logger.debug("Forced observation", event_id=event_id)
+    
+    def exclude_observation(self, event_id: str) -> None:
+        """Exclude a specific observation by event_id."""
+        self._excluded_observations.add(event_id)
+        self.logger.debug("Excluded observation", event_id=event_id)
+    
+    def force_slot(self, slot_id: str) -> None:
+        """Force include a specific artifact slot by slot_id."""
+        self._forced_slots.add(slot_id)
+        self.logger.debug("Forced slot", slot_id=slot_id)
+    
+    def exclude_slot(self, slot_id: str) -> None:
+        """Exclude a specific artifact slot by slot_id."""
+        self._excluded_slots.add(slot_id)
+        self.logger.debug("Excluded slot", slot_id=slot_id)
+    
+    def add_context_note(self, note: str) -> None:
+        """Add a context note to be included in the Working Set."""
+        self._context_notes.append(note)
+        self.logger.debug("Added context note", note=note[:50])
+    
+    def get_dynamic_rules(self) -> dict[str, Any]:
+        """Get current dynamic rule overrides."""
+        return {
+            "max_observations": self._dynamic_max_observations,
+            "artifact_priority_boosts": self._artifact_priority_boosts,
+            "forced_observations": list(self._forced_observations),
+            "excluded_observations": list(self._excluded_observations),
+            "forced_slots": list(self._forced_slots),
+            "excluded_slots": list(self._excluded_slots),
+            "context_notes": self._context_notes,
+        }
+    
+    def clear_dynamic_rules(self) -> None:
+        """Clear all dynamic rule overrides."""
+        self._dynamic_max_observations = None
+        self._artifact_priority_boosts.clear()
+        self._forced_observations.clear()
+        self._excluded_observations.clear()
+        self._forced_slots.clear()
+        self._excluded_slots.clear()
+        self._context_notes.clear()
+        self.logger.info("Cleared all dynamic rules")

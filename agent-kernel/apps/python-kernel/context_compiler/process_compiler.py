@@ -1,19 +1,51 @@
 """
 Process Context Compiler - Compiles execution context packages for tasks.
 Determines what each task Agent can see and do.
+
+This compiler uses ProcessContextCompilerAgent (a high-level agent) to actively
+explore Runtime Memory and compile context for task execution.
 """
+import asyncio
 import structlog
 from typing import Any
 
 from schemas.models import IntermediateRepresentation, CompiledContext, TaskSnapshot
+from context_compiler.compiler_agent import ProcessContextCompilerAgent
 
 logger = structlog.get_logger()
 
 
+def _run_async(coro):
+    """Helper to run async code, handling both sync and async contexts."""
+    try:
+        loop = asyncio.get_running_loop()
+        # We're in an async context, use create_task
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            future = pool.submit(asyncio.run, coro)
+            return future.result()
+    except RuntimeError:
+        # No running loop, use asyncio.run
+        return asyncio.run(coro)
+
+
 class ProcessContextCompiler:
     """
-    Compiles task-specific execution contexts.
-    Governs information visibility for each task.
+    Compiles task-specific execution contexts using an intelligent Agent.
+    
+    This compiler creates a ProcessContextCompilerAgent that actively explores
+    Runtime Memory to gather and compile the most relevant context for task
+    execution. The agent can:
+    
+    - Read files from data/sessions/, data/tasks/, data/events/, data/snapshots/
+    - Register discovered information as structured artifacts
+    - Modify its own context assembly rules dynamically
+    - Change exploration strategy based on findings
+    - Signal when sufficient context has been gathered
+    
+    The agent operates in two phases:
+    1. EXPLORE: Gather information from Runtime Memory
+    2. EXECUTE: Compile gathered information into CompiledContext
     """
     
     def __init__(self):
@@ -28,7 +60,10 @@ class ProcessContextCompiler:
         task_snapshots: list[TaskSnapshot] | None = None
     ) -> CompiledContext:
         """
-        Compile context package for a specific task.
+        Compile context package for a specific task using ProcessContextCompilerAgent.
+        
+        Creates and runs a compiler agent that actively explores Runtime Memory
+        to gather the most relevant context for the target task.
         
         Args:
             task_id: Unique task identifier
@@ -38,109 +73,35 @@ class ProcessContextCompiler:
             task_snapshots: Previous task snapshots for context
             
         Returns:
-            Compiled context for task execution
+            CompiledContext with gathered execution context
         """
         self.logger.info(
-            "Compiling process context",
+            "Compiling process context via Agent",
             task_id=task_id,
             process_name=process_definition.get("name", "unnamed"),
         )
         
-        # Extract capabilities
-        allowed = process_definition.get("capabilities", [])
-        
-        # Determine constraints based on process type
-        constraints = self._determine_constraints(
-            process_definition,
-            intermediate_repr
-        )
-        
-        # Build forbidden capabilities list
-        forbidden = self._determine_forbidden_capabilities(
-            process_definition,
-            intermediate_repr
-        )
-        
-        # Get relevant memory references
-        memory_refs = self._extract_memory_references(
-            task_snapshots or [],
-            process_definition
-        )
-        
-        compiled = CompiledContext(
-            task_id=task_id,
+        # Create compiler agent
+        agent = ProcessContextCompilerAgent(
+            target_task_id=task_id,
+            process_definition=process_definition,
+            intermediate_repr=intermediate_repr,
             session_context=session_context,
-            task_goal=process_definition.get("goal", "Execute task"),
-            constraints=constraints,
-            allowed_capabilities=allowed,
-            forbidden_capabilities=forbidden,
-            memory_references=memory_refs,
+            task_snapshots=task_snapshots,
         )
+        
+        # Run agent (async)
+        compiled = _run_async(agent.run())
         
         self.logger.info(
-            "Context compiled",
+            "Context compiled successfully",
             task_id=task_id,
-            allowed_caps=len(allowed),
-            constraints=len(constraints),
+            compilation_steps=compiled.metadata.get("compilation_steps", 0),
+            artifacts_gathered=compiled.metadata.get("artifacts_gathered", 0),
+            memory_refs=len(compiled.memory_references),
         )
         
         return compiled
-    
-    def _determine_constraints(
-        self,
-        process_definition: dict[str, Any],
-        intermediate_repr: IntermediateRepresentation
-    ) -> list[str]:
-        """Determine execution constraints for the process."""
-        constraints = [
-            "Operate within allowed capabilities only",
-            "Report errors clearly and immediately",
-            "Do not make assumptions about system state",
-        ]
-        
-        # Add process-specific constraints
-        if security_level := process_definition.get("security_level"):
-            if security_level == "high":
-                constraints.extend([
-                    "Require explicit confirmation for destructive operations",
-                    "Log all file system access",
-                ])
-        
-        # Add constraints from IR
-        if ir_constraints := intermediate_repr.context_hints.get("constraints"):
-            if isinstance(ir_constraints, list):
-                constraints.extend(ir_constraints)
-        
-        return constraints
-    
-    def _determine_forbidden_capabilities(
-        self,
-        process_definition: dict[str, Any],
-        intermediate_repr: IntermediateRepresentation
-    ) -> list[str]:
-        """Determine explicitly forbidden capabilities."""
-        forbidden = []
-        
-        # Get from process definition
-        if explicit_forbidden := process_definition.get("forbidden_capabilities"):
-            forbidden.extend(explicit_forbidden)
-        
-        # Get from context hints
-        if hints_forbidden := intermediate_repr.context_hints.get("forbidden_capabilities"):
-            if isinstance(hints_forbidden, list):
-                forbidden.extend(hints_forbidden)
-        
-        return list(set(forbidden))  # Remove duplicates
-    
-    def _extract_memory_references(
-        self,
-        task_snapshots: list[TaskSnapshot],
-        process_definition: dict[str, Any]
-    ) -> list[str]:
-        """Extract relevant memory references from previous tasks."""
-        # TODO: Implement intelligent memory retrieval
-        # For now, just return recent task IDs
-        return [snapshot.id for snapshot in task_snapshots[-5:]]
 
 
 # Singleton instance

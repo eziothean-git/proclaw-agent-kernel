@@ -109,7 +109,7 @@ class IntermediateRepresentation(BaseModel):
 class CompiledContext(BaseModel):
     """Compiled context for Agent execution."""
     model_config = ConfigDict(strict=True)
-    
+
     task_id: str = Field(description="Task identifier")
     session_context: dict[str, Any] = Field(description="Session-level context")
     task_goal: str = Field(description="Specific task objective")
@@ -118,6 +118,7 @@ class CompiledContext(BaseModel):
     forbidden_capabilities: list[str] = Field(description="Forbidden skills/tools")
     memory_references: list[str] = Field(default_factory=list)
     compiled_at: datetime = Field(default_factory=datetime.utcnow)
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Compilation metadata")
 
 
 class AgentOutput(BaseModel):

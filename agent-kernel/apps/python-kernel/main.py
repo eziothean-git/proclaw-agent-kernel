@@ -16,10 +16,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from context_compiler.master_compiler import get_master_compiler
+from executors_client.directory_lock_manager import get_directory_lock_manager
 from inbox_watcher import get_inbox_watcher
 from kernel_init import initialize_kernel, shutdown_kernel
 from personality.prime_personality import get_prime_personality
 from schemas.models import HealthCheck, Request, RequestStatus, Session
+from scheduled_dispatcher import ScheduledRequestStorage, ScheduledRequestDispatcher
 from session_host.session_host import get_session_host
 from storage.runtime_store import get_memory_manager
 from thread_runtime.scheduler import get_scheduler
@@ -28,6 +30,9 @@ logger = structlog.get_logger()
 
 # HTTP client for callbacks
 callback_client = httpx.AsyncClient(timeout=60.0)
+
+# Global dispatcher instance for health checks
+_scheduled_dispatcher: ScheduledRequestDispatcher | None = None
 
 
 @asynccontextmanager
@@ -44,19 +49,43 @@ async def lifespan(app: FastAPI):
     scheduler = get_scheduler()
     scheduler_task = asyncio.create_task(scheduler.start())
     
+    # Start directory lock cleanup task
+    lock_manager = get_directory_lock_manager()
+    lock_cleanup_task = asyncio.create_task(lock_manager.start_cleanup_task())
+    
     # Start inbox watcher (for Gateway mailbox integration)
     inbox_watcher = get_inbox_watcher()
     await inbox_watcher.start()
+    
+    # Start scheduled request dispatcher
+    global _scheduled_dispatcher
+    scheduled_storage = ScheduledRequestStorage(base_path=os.environ.get("DATA_PATH", "./data"))
+    _scheduled_dispatcher = ScheduledRequestDispatcher(
+        storage=scheduled_storage,
+        inbox_path=os.environ.get("GATEWAY_INBOX_PATH", "./data/gateway/inbox"),
+        check_interval=float(os.environ.get("SCHEDULER_CHECK_INTERVAL", "60")),
+    )
+    await _scheduled_dispatcher.start()
     
     logger.info("Python Kernel ready")
     yield
     
     logger.info("Shutting down Python Kernel")
     await inbox_watcher.stop()
+    if _scheduled_dispatcher:
+        await _scheduled_dispatcher.stop()
     await scheduler.stop()
     scheduler_task.cancel()
     try:
         await scheduler_task
+    except asyncio.CancelledError:
+        pass
+    
+    # Stop directory lock cleanup task
+    await lock_manager.stop_cleanup_task()
+    lock_cleanup_task.cancel()
+    try:
+        await lock_cleanup_task
     except asyncio.CancelledError:
         pass
     
@@ -87,15 +116,22 @@ FastAPIInstrumentor.instrument_app(app)
 
 @app.get("/health", response_model=HealthCheck)
 async def health_check():
+    components = {
+        "storage": "connected",
+        "scheduler": "running",
+        "run_mode": os.environ.get("KERNEL_RUN_MODE", "real"),
+        "scheduled_dispatcher": "running" if _scheduled_dispatcher and _scheduled_dispatcher._running else "stopped",
+    }
+    
+    if _scheduled_dispatcher:
+        stats = _scheduled_dispatcher.get_statistics()
+        components["scheduled_request_stats"] = stats
+    
     return HealthCheck(
         status="healthy",
         version="0.1.0",
         timestamp=datetime.utcnow(),
-        components={
-            "storage": "connected",
-            "scheduler": "running",
-            "run_mode": os.environ.get("KERNEL_RUN_MODE", "real"),
-        },
+        components=components,
     )
 
 

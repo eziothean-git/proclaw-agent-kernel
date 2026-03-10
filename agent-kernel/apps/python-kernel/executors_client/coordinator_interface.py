@@ -212,10 +212,16 @@ class RequestExecutionCoordinator:
                 tool_name=tool_name,
             )
             
+            # Extract task_id and session_id from request context for directory locking
+            task_id = request.context.get("task_id", request.request_id)
+            session_id = request.context.get("session_id", "unknown")
+            
             raw_result = await self.local_registry.execute(
                 skill_name=skill_name,
                 tool_name=tool_name,
                 parameters=parameters,
+                task_id=task_id,
+                session_id=session_id,
             )
             
             return ExecutionResult(

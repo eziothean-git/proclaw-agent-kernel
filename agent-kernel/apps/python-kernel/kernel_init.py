@@ -11,7 +11,11 @@ import structlog
 
 from executors_client.local_skill_registry import get_local_skill_registry
 from skills.agentic_os_interface import get_os_interface_skill
-from skills.skill_adapters import FileSystemSkillAdapter, ShellSkillAdapter
+from skills.skill_adapters import (
+    FileSystemSkillAdapter,
+    ShellSkillAdapter,
+    ScheduledRequestSkillAdapter,
+)
 
 logger = structlog.get_logger()
 
@@ -102,6 +106,113 @@ async def _register_local_skills() -> None:
         },
     )
     logger.info("Registered shell-skill")
+    
+    # Register scheduled request skill (for Prime Personality context)
+    scheduled_skill = ScheduledRequestSkillAdapter()
+    registry.register(
+        skill_name="scheduled-request",
+        skill_instance=scheduled_skill,
+        tool_schemas={
+            "create_delayed_request": {
+                "name": "create_delayed_request",
+                "description": "Create a delayed request that triggers after a specified time",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "user_id": {"type": "string"},
+                        "content": {"type": "string"},
+                        "delay_seconds": {"type": "integer"},
+                        "is_recurring": {"type": "boolean"},
+                        "metadata": {"type": "object"},
+                    },
+                    "required": ["session_id", "user_id", "content", "delay_seconds"],
+                },
+            },
+            "create_cron_request": {
+                "name": "create_cron_request",
+                "description": "Create a cron-based recurring request",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "user_id": {"type": "string"},
+                        "content": {"type": "string"},
+                        "cron_expression": {"type": "string"},
+                        "metadata": {"type": "object"},
+                    },
+                    "required": ["session_id", "user_id", "content", "cron_expression"],
+                },
+            },
+            "list_scheduled_requests": {
+                "name": "list_scheduled_requests",
+                "description": "List scheduled requests with optional filtering",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "status": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+            },
+            "get_scheduled_request": {
+                "name": "get_scheduled_request",
+                "description": "Get details of a specific scheduled request",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "request_id": {"type": "string"},
+                    },
+                    "required": ["request_id"],
+                },
+            },
+            "cancel_scheduled_request": {
+                "name": "cancel_scheduled_request",
+                "description": "Cancel a pending scheduled request",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "request_id": {"type": "string"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["request_id"],
+                },
+            },
+            "pause_scheduled_request": {
+                "name": "pause_scheduled_request",
+                "description": "Pause a pending scheduled request",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "request_id": {"type": "string"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["request_id"],
+                },
+            },
+            "resume_scheduled_request": {
+                "name": "resume_scheduled_request",
+                "description": "Resume a paused scheduled request",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "request_id": {"type": "string"},
+                    },
+                    "required": ["request_id"],
+                },
+            },
+            "get_statistics": {
+                "name": "get_statistics",
+                "description": "Get statistics about scheduled requests",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+        },
+    )
+    logger.info("Registered scheduled-request skill")
     
     logger.info(
         "Local skills registered",
