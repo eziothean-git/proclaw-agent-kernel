@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-03-10T12:18:18.532Z",
+  "requestId": "2281aef4-bea4-431e-b4af-ad5415cc599f",
+  "sessionId": "sess_1773145098530_g4rl8us09",
+  "userId": "proclaw-user",
+  "rawRequest": {
+    "sessionId": "sess_1773145098530_g4rl8us09",
+    "message": "介绍你的结构",
+    "userId": "proclaw-user",
+    "platform": "tui"
+  }
+}

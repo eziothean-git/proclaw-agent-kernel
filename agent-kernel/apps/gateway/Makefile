@@ -2,7 +2,7 @@
 
 # Default target
 help:
-	@echo "OpenClaw Gateway - Available targets:"
+	@echo "ProClaw Gateway - Available targets:"
 	@echo ""
 	@echo "  make build      - Build the Gateway"
 	@echo "  make dev        - Run Gateway in development mode"
@@ -35,12 +35,12 @@ typecheck:
 
 # TUI client
 tui:
-	@echo "Starting OpenClaw TUI..."
+	@echo "Starting ProClaw TUI..."
 	@cd clients/tui && ./scripts/run.sh
 
 tui-dev:
-	@echo "Starting OpenClaw TUI (debug mode)..."
-	@cd clients/tui && pip install -q -e . && python -m openclaw_tui.main --debug
+	@echo "Starting ProClaw TUI (debug mode)..."
+	@cd clients/tui && pip install -q -e . && python -m proclaw_tui.main --debug
 
 tui-install:
 	@echo "Installing TUI dependencies..."

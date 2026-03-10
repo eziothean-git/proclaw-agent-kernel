@@ -1,5 +1,5 @@
 #!/bin/bash
-# OpenClaw TUI startup script
+# ProClaw TUI startup script
 
 set -e
 
@@ -11,11 +11,11 @@ NC='\033[0m' # No Color
 
 # Default configuration
 GATEWAY_URL="${GATEWAY_URL:-http://localhost:3000}"
-USER_ID="${USER_ID:-openclaw-user}"
+USER_ID="${USER_ID:-proclaw-user}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TUI_DIR="${SCRIPT_DIR}/.."
 
-echo -e "${GREEN}🧠 OpenClaw Terminal UI${NC}"
+echo -e "${GREEN}🧠 ProClaw Terminal UI${NC}"
 echo "======================="
 echo ""
 
@@ -56,9 +56,9 @@ pip install -q -e . 2>/dev/null || pip install -e .
 
 # Run TUI
 echo ""
-echo -e "${GREEN}Starting OpenClaw TUI...${NC}"
+echo -e "${GREEN}Starting ProClaw TUI...${NC}"
 echo "Gateway: $GATEWAY_URL"
 echo "User: $USER_ID"
 echo ""
 
-exec python -m openclaw_tui.main --url "$GATEWAY_URL" --user "$USER_ID" "$@"
+exec python -m proclaw_tui.main --url "$GATEWAY_URL" --user "$USER_ID" "$@"

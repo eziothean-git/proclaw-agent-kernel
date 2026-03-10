@@ -10,7 +10,7 @@ from rich.text import Text
 from textual.reactive import reactive
 from textual.widgets import RichLog
 
-from openclaw_tui.client.events import ChatStreamEvent, EventType
+from proclaw_tui.client.events import ChatStreamEvent, EventType
 
 
 class Message:

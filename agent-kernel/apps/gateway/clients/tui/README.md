@@ -1,6 +1,6 @@
-# OpenClaw TUI - 设置指南
+# ProClaw TUI - 设置指南
 
-Terminal UI client for Agent Kernel Gateway. OpenClaw是一个终端界面客户端，通过本地WebSocket/SSE连接Gateway，访问Agentic OS。
+Terminal UI client for Agent Kernel Gateway. ProClaw是一个终端界面客户端，通过本地WebSocket/SSE连接Gateway，访问Agentic OS。
 
 ## 📋 目录
 
@@ -57,7 +57,7 @@ docker-compose logs -f
 # 5. 安装并启动 TUI 客户端
 cd ../apps/gateway/clients/tui
 pip install -e .
-openclaw
+proclaw
 ```
 
 ### 方式二：手动安装
@@ -83,7 +83,7 @@ python main.py
 # 4. 启动 TUI（新终端）
 cd agent-kernel/apps/gateway/clients/tui
 pip install -e .
-openclaw
+proclaw
 ```
 
 ## 🐳 Docker部署
@@ -205,7 +205,7 @@ cd agent-kernel/apps/gateway
 make tui-install
 
 # 运行
-openclaw
+proclaw
 # 或
 make tui
 ```
@@ -260,12 +260,12 @@ LLM_MAX_TOKENS=4000
 
 ```bash
 # 命令行参数
-openclaw --help
+proclaw --help
 
 # 常用参数
-openclaw \
+proclaw \
   --url http://localhost:3000 \     # Gateway URL
-  --user openclaw-user \             # 用户ID
+  --user proclaw-user \             # 用户ID
   --debug                            # 调试模式
 ```
 
@@ -275,20 +275,20 @@ openclaw \
 
 ```bash
 # 默认连接 localhost:3000
-openclaw
+proclaw
 
 # 连接远程 Gateway
-openclaw --url http://remote-gateway:3000
+proclaw --url http://remote-gateway:3000
 
 # 调试模式（显示详细日志）
-openclaw --debug
+proclaw --debug
 ```
 
 ### 界面说明
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  🧠 OpenClaw Terminal v0.1.0                    [● Connected]   │
+│  🧠 ProClaw Terminal v0.1.0                    [● Connected]   │
 ├──────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  ┌─ Conversation ──────────────────────────────────────────────┐│
@@ -362,7 +362,7 @@ cd agent-kernel/apps/gateway/clients/tui
 pip install --force-reinstall -e .
 
 # 调试模式运行
-openclaw --debug
+proclaw --debug
 ```
 
 ### 问题：LLM API 调用失败
@@ -441,7 +441,7 @@ python main.py
 
 # 3. 启动 TUI (Terminal 3)
 cd agent-kernel/apps/gateway/clients/tui
-openclaw --debug
+proclaw --debug
 ```
 
 ### 代码格式化

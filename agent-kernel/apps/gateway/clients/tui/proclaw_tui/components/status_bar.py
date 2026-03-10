@@ -7,7 +7,7 @@ from rich.text import Text
 from textual.reactive import reactive
 from textual.widgets import Static
 
-from openclaw_tui.client.events import ConnectionState, ConnectionStatus, HealthStatus
+from proclaw_tui.client.events import ConnectionState, ConnectionStatus, HealthStatus
 
 
 class StatusBar(Static):

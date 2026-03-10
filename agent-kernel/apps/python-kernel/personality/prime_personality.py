@@ -47,7 +47,24 @@ Output a JSON structure with:
 - intent: High-level classification
 - goals: List of objectives
 - processes: Array of process definitions with capabilities and constraints
-- context_hints: Additional context for compilation""")
+- context_hints: Additional context for compilation
+
+IMPORTANT: Return ONLY the JSON object without any markdown formatting (no ```json or ``` blocks).
+Example format:
+{
+  "intent": "file_operation",
+  "goals": ["List directory contents"],
+  "processes": [
+    {
+      "name": "list_files",
+      "goal": "List files in current directory",
+      "capabilities": ["fs-skill"],
+      "constraints": [],
+      "security_level": "low"
+    }
+  ],
+  "context_hints": {}
+}""")
 
 
 class PrimePersonality:
@@ -88,6 +105,9 @@ class PrimePersonality:
             # Use unified LLM client
             result_text = await self.client.generate(context)
             
+            # Clean markdown code blocks if present
+            result_text = self._extract_json_from_markdown(result_text)
+            
             # Parse JSON result
             result_data = json.loads(result_text)
             
@@ -123,6 +143,25 @@ class PrimePersonality:
                 error=str(e),
             )
             raise
+
+    def _extract_json_from_markdown(self, text: str) -> str:
+        """Extract JSON content from markdown code blocks."""
+        import re
+
+        # Try to find JSON in markdown code blocks
+        patterns = [
+            r"```json\s*\n(.*?)\n```",  # ```json ... ```
+            r"```yaml\s*\n(.*?)\n```",  # ```yaml ... ```
+            r"```\s*\n(.*?)\n```",      # ``` ... ```
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text, re.DOTALL)
+            if match:
+                return match.group(1).strip()
+
+        # If no code blocks found, return original text stripped
+        return text.strip()
 
     def _build_enhanced_context(self, request: Request, compiled_context: Any | None) -> str:
         """Build enhanced context using pre-compiled information from Master Compiler."""

@@ -1,4 +1,4 @@
-"""Main TUI application for OpenClaw."""
+"""Main TUI application for ProClaw."""
 
 import asyncio
 from typing import Optional
@@ -8,16 +8,16 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Footer, Header, Static
 
-from openclaw_tui.client.events import ConnectionState, ConnectionStatus, EventType
-from openclaw_tui.client.gateway_client import GatewayClient
-from openclaw_tui.components.chat_view import ChatView
-from openclaw_tui.components.input_bar import InputBar
-from openclaw_tui.components.status_bar import StatusBar
-from openclaw_tui.components.system_panel import SystemPanel
+from proclaw_tui.client.events import ConnectionState, ConnectionStatus, EventType
+from proclaw_tui.client.gateway_client import GatewayClient
+from proclaw_tui.components.chat_view import ChatView
+from proclaw_tui.components.input_bar import InputBar
+from proclaw_tui.components.status_bar import StatusBar
+from proclaw_tui.components.system_panel import SystemPanel
 
 
-class OpenClawApp(App):
-    """OpenClaw Terminal UI Application."""
+class ProClawApp(App):
+    """ProClaw Terminal UI Application."""
 
     CSS = """
     Screen {
@@ -89,7 +89,7 @@ class OpenClawApp(App):
 
     def compose(self) -> ComposeResult:
         """Compose the UI."""
-        yield Header(show_clock=True, name="OpenClaw Terminal")
+        yield Header(show_clock=True, name="ProClaw Terminal")
 
         with Vertical(id="main_container"):
             with Horizontal(id="content_area"):
@@ -112,7 +112,7 @@ class OpenClawApp(App):
         # Show welcome message
         chat_view = self.query_one("#chat_view", ChatView)
         chat_view.add_system_message(
-            "🧠 欢迎来到 OpenClaw Terminal!\n"
+            "🧠 欢迎来到 ProClaw Terminal!\n"
             "输入消息开始对话，或输入 /help 查看帮助。\n"
             "Gateway URL: " + self.gateway_url
         )
