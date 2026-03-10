@@ -1,6 +1,9 @@
 """
-Executor Client - HTTP client for calling TypeScript layer Executor.
+Remote Executor Client - HTTP client for calling TypeScript layer Executor.
 Sends tool call requests and receives observations.
+
+This is the remote/client-side executor that communicates with external
+MCP servers or the TypeScript executor layer.
 """
 import httpx
 import structlog
@@ -11,15 +14,15 @@ from schemas.models import ToolCallRequest, ToolCallResult
 logger = structlog.get_logger()
 
 
-class ExecutorClient:
+class RemoteExecutorClient:
     """
-    Client for communicating with TypeScript Executor layer.
-    Handles tool call execution and result retrieval.
+    Client for communicating with remote executor layer (TypeScript/MCP servers).
+    Handles tool call execution and result retrieval via HTTP.
     """
     
     def __init__(self, base_url: str = "http://localhost:3000"):
         self.base_url = base_url
-        self.logger = logger.bind(component="ExecutorClient")
+        self.logger = logger.bind(component="RemoteExecutorClient")
         self.client = httpx.AsyncClient(
             base_url=base_url,
             timeout=60.0,
@@ -166,13 +169,18 @@ class ExecutorClient:
 
 
 # Singleton instance
-_executor_client: ExecutorClient | None = None
+_remote_executor_client: RemoteExecutorClient | None = None
 
 
-def get_executor_client() -> ExecutorClient:
+def get_remote_executor_client() -> RemoteExecutorClient:
     """Get or create singleton instance."""
-    global _executor_client
-    if _executor_client is None:
+    global _remote_executor_client
+    if _remote_executor_client is None:
         base_url = "http://localhost:3000"  # Gateway URL
-        _executor_client = ExecutorClient(base_url)
-    return _executor_client
+        _remote_executor_client = RemoteExecutorClient(base_url)
+    return _remote_executor_client
+
+
+# Backward compatibility alias
+ExecutorClient = RemoteExecutorClient
+get_executor_client = get_remote_executor_client

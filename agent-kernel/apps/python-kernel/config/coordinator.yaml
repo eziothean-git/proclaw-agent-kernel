@@ -1,0 +1,42 @@
+# Request Execution Coordinator Configuration
+# Routing rules for local vs remote skill execution
+
+version: "1.0"
+
+# Skills that should be executed locally (in-process Python)
+# These take priority over remote execution
+local_priority:
+  - fs-skill          # File system operations
+  - shell-skill       # Shell command execution
+  # Add more local skills here as they are implemented
+
+# Skills that MUST be executed remotely (e.g., TypeScript MCP servers)
+# These will never be routed locally even if registered
+remote_only:
+  # Example: complex skills that only exist in TypeScript layer
+  # - browser-automation
+  # - advanced-code-analysis
+
+# Default routing behavior
+default_routing: "auto"  # auto | local | remote
+
+# Auto routing logic:
+# 1. If skill is in remote_only -> route to remote
+# 2. If skill is in local_priority -> route to local if available
+# 3. If skill is registered locally -> route to local
+# 4. Otherwise -> route to remote
+
+# Timeout configurations (milliseconds)
+timeouts:
+  local_default: 30000
+  remote_default: 60000
+  system_operation: 10000
+
+# Retry configuration
+retry:
+  max_retries: 3
+  backoff_ms: 1000
+  retryable_errors:
+    - timeout
+    - connection_error
+    - temporary_failure

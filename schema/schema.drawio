@@ -1,13 +1,13 @@
 <mxfile host="65bd71144e">
     <diagram id="z6QBwVY8QCxHCLJbhRA2" name="第 1 页">
-        <mxGraphModel dx="2147" dy="2163" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+        <mxGraphModel dx="1331" dy="1442" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
-                <mxCell id="122" value="" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="122" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#60a917;strokeColor=#2D7600;fontColor=#ffffff;" parent="1" vertex="1">
                     <mxGeometry x="-260" y="-230" width="280" height="450" as="geometry"/>
                 </mxCell>
-                <mxCell id="61" value="" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+                <mxCell id="61" value="z暗示" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="340" y="-130" width="550" height="580" as="geometry"/>
                 </mxCell>
                 <mxCell id="87" style="edgeStyle=none;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" parent="1" source="41" target="85" edge="1">
@@ -40,7 +40,7 @@
                         </Array>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="3" value="进程ContextCompiler" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" parent="1" vertex="1">
+                <mxCell id="3" value="进程ContextCompiler" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" parent="1" vertex="1">
                     <mxGeometry x="740" y="350" width="120" height="60" as="geometry"/>
                 </mxCell>
                 <mxCell id="64" style="edgeStyle=none;html=1;exitX=0;exitY=0.25;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" parent="1" source="4" target="3" edge="1">
@@ -98,7 +98,7 @@
                         </Array>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="6" value="Agentic OS Interface Skill" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" parent="1" vertex="1">
+                <mxCell id="6" value="Agentic OS Interface Skill" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#60a917;strokeColor=#2D7600;fontColor=#ffffff;" parent="1" vertex="1">
                     <mxGeometry x="190" y="350" width="120" height="60" as="geometry"/>
                 </mxCell>
                 <mxCell id="26" style="edgeStyle=none;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" parent="1" source="19" edge="1">
@@ -119,7 +119,7 @@
                         </Array>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="19" value="Agent线程调度器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" parent="1" vertex="1">
+                <mxCell id="19" value="Agent线程调度器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">
                     <mxGeometry x="600" y="190" width="120" height="60" as="geometry"/>
                 </mxCell>
                 <mxCell id="38" style="edgeStyle=none;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0;" parent="1" source="21" target="29" edge="1">
@@ -128,7 +128,7 @@
                 <mxCell id="97" style="edgeStyle=none;html=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.25;entryDx=0;entryDy=0;" parent="1" source="21" target="23" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="21" value="Agent线程1" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+                <mxCell id="21" value="Agent线程1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#60a917;fontColor=#ffffff;strokeColor=#2D7600;" parent="1" vertex="1">
                     <mxGeometry x="500" y="100" width="120" height="60" as="geometry"/>
                 </mxCell>
                 <mxCell id="40" style="edgeStyle=none;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.75;entryY=1;entryDx=0;entryDy=0;" parent="1" source="23" target="29" edge="1">
@@ -137,13 +137,13 @@
                 <mxCell id="98" style="edgeStyle=none;html=1;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=1;entryY=0.75;entryDx=0;entryDy=0;" parent="1" source="23" target="21" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="23" value="Agent线程N" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+                <mxCell id="23" value="Agent线程N" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#60a917;fontColor=#ffffff;strokeColor=#2D7600;" parent="1" vertex="1">
                     <mxGeometry x="700" y="100" width="120" height="60" as="geometry"/>
                 </mxCell>
                 <mxCell id="36" style="edgeStyle=none;html=1;exitX=0.25;exitY=0;exitDx=0;exitDy=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0;" parent="1" source="29" target="35" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="29" value="Request Executer/Cordinator" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" parent="1" vertex="1">
+                <mxCell id="29" value="Request Executer/Cordinator" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#60a917;strokeColor=#2D7600;fontColor=#ffffff;" parent="1" vertex="1">
                     <mxGeometry x="480" y="30" width="360" height="30" as="geometry"/>
                 </mxCell>
                 <mxCell id="34" style="edgeStyle=none;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="31" target="3" edge="1">
@@ -186,7 +186,7 @@
                 <mxCell id="94" style="edgeStyle=none;html=1;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=1;entryY=0.75;entryDx=0;entryDy=0;" parent="1" source="70" target="89" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="124" style="edgeStyle=none;html=1;exitX=0.25;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="70" target="79">
+                <mxCell id="124" style="edgeStyle=none;html=1;exitX=0.25;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" parent="1" source="70" target="79" edge="1">
                     <mxGeometry relative="1" as="geometry">
                         <Array as="points">
                             <mxPoint x="80" y="330"/>
@@ -248,40 +248,40 @@
                 <mxCell id="103" value="请求&lt;span style=&quot;background-color: transparent; color: rgb(63, 63, 63);&quot;&gt;管理器&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#60a917;strokeColor=#2D7600;fontColor=#ffffff;" parent="1" vertex="1">
                     <mxGeometry x="50" y="260" width="120" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="116" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" edge="1" parent="1" source="108" target="115">
+                <mxCell id="116" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" parent="1" source="108" target="115" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="108" value="初始上下文" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="108" value="初始上下文" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="-185" y="-15" width="120" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="114" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="109" target="108">
+                <mxCell id="114" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="109" target="108" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="109" value="Atomic Runtime Context Builder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+                <mxCell id="109" value="Atomic Runtime Context Builder" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#008a00;strokeColor=#005700;fontColor=#ffffff;" parent="1" vertex="1">
                     <mxGeometry x="-185" y="-100" width="120" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="111" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="110" target="109">
+                <mxCell id="111" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" parent="1" source="110" target="109" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="110" value="上层Agent&lt;span style=&quot;color: rgb(63, 63, 63); background-color: transparent;&quot;&gt;指令&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="110" value="上层Agent&lt;span style=&quot;color: rgb(63, 63, 63); background-color: transparent;&quot;&gt;指令&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="-245" y="-200" width="120" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="113" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="112" target="109">
+                <mxCell id="113" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" parent="1" source="112" target="109" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="112" value="环境信息" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="112" value="环境信息" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="-115" y="-200" width="120" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="120" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="115" target="119">
+                <mxCell id="120" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" source="115" target="119" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="115" value="Agent操作界面" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="115" value="Agent操作界面" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="-185" y="70" width="120" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="118" value="Tool Call" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                <mxCell id="118" value="Tool Call" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
                     <mxGeometry x="-125" y="50" width="60" height="30" as="geometry"/>
                 </mxCell>
-                <mxCell id="121" style="edgeStyle=none;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="119" target="109">
+                <mxCell id="121" style="edgeStyle=none;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="119" target="109" edge="1">
                     <mxGeometry relative="1" as="geometry">
                         <Array as="points">
                             <mxPoint x="-15" y="175"/>
@@ -289,10 +289,10 @@
                         </Array>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="119" value="运行结果" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="119" value="运行结果" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="-185" y="145" width="120" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="123" value="Agent线程" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" vertex="1" parent="1">
+                <mxCell id="123" value="Agent线程" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
                     <mxGeometry x="-155" y="-230" width="60" height="30" as="geometry"/>
                 </mxCell>
             </root>

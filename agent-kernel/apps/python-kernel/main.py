@@ -17,6 +17,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from context_compiler.master_compiler import get_master_compiler
 from inbox_watcher import get_inbox_watcher
+from kernel_init import initialize_kernel, shutdown_kernel
 from personality.prime_personality import get_prime_personality
 from schemas.models import HealthCheck, Request, RequestStatus, Session
 from session_host.session_host import get_session_host
@@ -32,6 +33,10 @@ callback_client = httpx.AsyncClient(timeout=60.0)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting Python Kernel")
+    
+    # Initialize kernel (registers skills, starts OS interface)
+    await initialize_kernel()
+    
     memory_manager = get_memory_manager()
     await memory_manager.initialize()
     
@@ -54,6 +59,10 @@ async def lifespan(app: FastAPI):
         await scheduler_task
     except asyncio.CancelledError:
         pass
+    
+    # Shutdown kernel gracefully
+    await shutdown_kernel()
+    
     await memory_manager.close()
     await callback_client.aclose()
     logger.info("Python Kernel stopped")

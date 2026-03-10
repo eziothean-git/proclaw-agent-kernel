@@ -1,99 +1,262 @@
 """
-Agent Thread - Execution-level Agent that operates in local context.
+Agent Thread - Execution-level atomic Agent with Event Log + Working Set architecture.
+
+This is the refactored Agent Thread that:
+- Uses Event Log instead of conversation history
+- Builds Working Sets via rule-driven WorkingSetBuilder
+- Parses output via AgentOutputParser
+- Executes via RequestExecutionCoordinator
+- Implements SEE-ACT-UPDATE loop
+
+Phase-aware: Supports Explore → Execute → Complete transitions.
 """
 import os
+import uuid
 from datetime import datetime
 from typing import Any
 
 import structlog
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models.openai import OpenAIModel
 
-from schemas.models import AgentOutput, CompiledContext, TaskSnapshot, ToolCallRequest
-from storage.runtime_store import get_memory_manager
+from executors_client.coordinator_interface import get_execution_coordinator
+from schemas.models import AgentOutput, CompiledContext, TaskSnapshot
+from skills.agentic_os_interface import get_os_interface_skill
+from thread_runtime.event_log import EventLogManager
+from thread_runtime.models import (
+    ArtifactSlot,
+    EventType,
+    ExecutionRequest,
+    IntentType,
+    Phase,
+    RequestType,
+    SystemMessage,
+    WorkingSet,
+)
+from thread_runtime.output_parser import get_output_parser
+from thread_runtime.working_set_builder import WorkingSetBuilder
 
 logger = structlog.get_logger()
 
 
 class AgentThread:
+    """
+    Atomic Agent Thread with Event Log + Working Set architecture.
+    
+    Key characteristics:
+    - Rule-driven working set updates (not semantic context editing)
+    - SEE-ACT-UPDATE loop
+    - Phase-based execution (Explore → Execute → Complete)
+    - Observable state via full Event Log export
+    """
+    
     def __init__(
         self,
         task: TaskSnapshot,
         compiled_context: CompiledContext,
-        executor_client: Any,
+        coordinator: Any | None = None,
+        ws_builder: WorkingSetBuilder | None = None,
     ):
         self.task = task
-        self.context = compiled_context
-        self.executor_client = executor_client
-        self.logger = logger.bind(component="AgentThread", task_id=task.id)
-        self.run_mode = os.environ.get("KERNEL_RUN_MODE", "real")
-        self.agent = self._create_agent() if self.run_mode == "real" else None
-        self.conversation_history: list[ModelMessage] = []
-        self.max_iterations = 10
-        self.current_iteration = 0
-        self.observations: list[dict[str, Any]] = []
-
-    def _create_agent(self) -> Agent:
-        model = OpenAIModel("gpt-4")
-        return Agent(
-            model=model,
-            system_prompt=self._build_system_prompt(),
-            result_type=AgentOutput,
-            tools=[],
+        self.compiled_context = compiled_context
+        self.thread_id = f"thread_{uuid.uuid4().hex[:8]}"
+        
+        # Core components
+        self.coordinator = coordinator or get_execution_coordinator()
+        self.ws_builder = ws_builder or WorkingSetBuilder()
+        self.parser = get_output_parser()
+        
+        # Runtime state
+        self.event_log = EventLogManager(task.id)
+        self.artifact_slots: dict[str, ArtifactSlot] = {}
+        self.immutable_input = self._build_immutable_input(compiled_context)
+        
+        # Execution state
+        self.current_phase = Phase.EXPLORE
+        self.step_count = 0
+        self.max_steps = self._parse_max_steps(compiled_context.constraints)
+        self.is_paused = False
+        self.pause_reason: str | None = None
+        
+        # LLM client (optional, for real mode)
+        self.run_mode = os.environ.get("KERNEL_RUN_MODE", "mock")
+        self.agent = None
+        if self.run_mode == "real":
+            self.agent = self._create_agent()
+        
+        # Register with OS interface for monitoring/control
+        self._register_with_os_interface()
+        
+        self.logger = logger.bind(
+            component="AgentThread",
+            thread_id=self.thread_id,
+            task_id=task.id,
         )
+        
+        self.logger.info(
+            "Agent Thread initialized",
+            phase=self.current_phase.value,
+            run_mode=self.run_mode,
+        )
+    
+    def _parse_max_steps(self, constraints: list[str]) -> int:
+        """Parse max_steps from constraints list."""
+        for constraint in constraints:
+            if "max_steps:" in constraint:
+                try:
+                    return int(constraint.split(":")[1].strip())
+                except (ValueError, IndexError):
+                    pass
+        return 50  # Default
 
-    def _build_system_prompt(self) -> str:
-        lines = [
-            "You are an Agent Thread executing a specific task.",
-            "",
-            f"Task Goal: {self.context.task_goal}",
-            "",
-            "Constraints:",
-        ]
-        lines.extend([f"  - {constraint}" for constraint in self.context.constraints])
-        lines.extend(["", "Allowed Capabilities:"])
-        lines.extend([f"  - {cap}" for cap in self.context.allowed_capabilities])
-        if self.context.forbidden_capabilities:
-            lines.extend(["", "Forbidden Capabilities (DO NOT USE):"])
-            lines.extend([f"  - {cap}" for cap in self.context.forbidden_capabilities])
-        lines.extend([
-            "",
-            "Instructions:",
-            "1. Work within your allowed capabilities only",
-            "2. If you need a tool, request it explicitly",
-            "3. If you encounter errors, attempt to correct them",
-            "4. Report success or failure clearly",
-            "5. Prefer recent context and use fs-skill to inspect logs only when needed",
-        ])
-        return "\n".join(lines)
-
-    async def run(self) -> AgentOutput:
-        self.logger.info("Starting agent thread execution", goal=self.context.task_goal, run_mode=self.run_mode)
-        if self.run_mode == "mock":
-            return await self._run_mock()
-
+    def _build_immutable_input(self, context: CompiledContext) -> dict[str, Any]:
+        """Build immutable input bundle from compiled context."""
+        return {
+            "task_goal": context.task_goal,
+            "constraints": context.constraints,
+            "allowed_capabilities": context.allowed_capabilities,
+            "forbidden_capabilities": context.forbidden_capabilities,
+            "session_context": context.session_context,
+        }
+    
+    def _create_agent(self):
+        """Create LLM agent (for real mode)."""
         try:
-            while self.current_iteration < self.max_iterations:
-                self.current_iteration += 1
-                result = await self._run_step()
-                if result.success and not result.tool_calls:
-                    result.observations = self.observations
-                    return result
-                if result.tool_calls:
-                    observations = await self._execute_tool_calls(result.tool_calls)
-                    self.observations.extend(observations)
-                    for obs in observations:
-                        self.conversation_history.append(ModelMessage.user(str(obs)))
-                    if all(obs.get("success", False) for obs in observations):
-                        continue
+            from pydantic_ai import Agent
+            from pydantic_ai.models.openai import OpenAIModel
+            
+            model = OpenAIModel("gpt-4")
+            return Agent(
+                model=model,
+                system_prompt=self._build_system_prompt(),
+            )
+        except ImportError:
+            self.logger.warning("pydantic_ai not available, using mock mode")
+            return None
+    
+    def _build_system_prompt(self) -> str:
+        """Build system prompt for LLM."""
+        return f"""You are an Agent Thread executing a task.
+
+Task: {self.compiled_context.task_goal}
+
+You operate in a SEE-ACT-UPDATE loop with bounded context.
+Your available information is limited to the Working Set provided each step.
+
+## Phase-aware execution:
+- EXPLORE: Gather information, understand the problem
+- EXECUTE: Perform actions based on gathered context
+- COMPLETE: Finalize and report results
+
+## Output format (YAML):
+```yaml
+intent: tool_call | phase_transition | final_answer | clarification
+reasoning: "Your reasoning here"
+
+# For tool_call:
+tool_calls:
+  - skill: skill_name
+    tool: tool_name
+    parameters:
+      key: value
+
+# For phase_transition:
+to_phase: execute | complete
+reason: "Why transitioning"
+
+# For final_answer:
+answer: "Your final response"
+success: true | false
+```
+
+## Guidelines:
+1. Stay within allowed capabilities
+2. Use structured output format
+3. Request clarification if unclear
+4. Transition phases when appropriate
+5. Report success/failure clearly
+"""
+    
+    def _register_with_os_interface(self) -> None:
+        """Register this thread with OS interface for monitoring."""
+        try:
+            os_interface = get_os_interface_skill()
+            os_interface.register_thread(
+                thread_id=self.thread_id,
+                session_id=self.task.session_id,
+                task_id=self.task.id,
+                thread_ref=self,
+            )
+        except Exception as e:
+            self.logger.warning("Failed to register with OS interface", error=str(e))
+    
+    def _unregister_from_os_interface(self) -> None:
+        """Unregister from OS interface."""
+        try:
+            os_interface = get_os_interface_skill()
+            os_interface.unregister_thread(self.thread_id)
+        except Exception:
+            pass
+    
+    async def run(self) -> AgentOutput:
+        """
+        Main execution loop - SEE-ACT-UPDATE.
+        
+        Returns:
+            AgentOutput with final result
+        """
+        self.logger.info(
+            "Starting agent thread execution",
+            goal=self.compiled_context.task_goal,
+        )
+        
+        try:
+            while self.step_count < self.max_steps:
+                # Check if paused
+                if self.is_paused:
+                    await self._wait_for_resume()
+                
+                self.step_count += 1
+                
+                # SEE: Build working set
+                working_set = self._build_working_set()
+                
+                # ACT: Generate action
+                raw_output = await self._generate_action(working_set)
+                
+                # Parse output
+                parsed = self.parser.parse(raw_output, self.current_phase)
+                
+                # Handle different intents
+                if parsed.intent_type == IntentType.FINAL_ANSWER:
+                    return await self._handle_final_answer(parsed)
+                
+                elif parsed.intent_type == IntentType.TOOL_CALL:
+                    await self._handle_tool_calls(parsed)
+                
+                elif parsed.intent_type == IntentType.PHASE_TRANSITION:
+                    await self._handle_phase_transition(parsed)
+                
+                elif parsed.intent_type == IntentType.CLARIFICATION:
+                    return await self._handle_clarification(parsed)
+                
+                elif parsed.intent_type == IntentType.ERROR:
+                    return await self._handle_error(parsed)
+                
+                else:  # UNKNOWN
+                    self.logger.warning(
+                        "Unknown intent, continuing",
+                        raw_output=raw_output[:200],
+                    )
+                    # Continue loop
+            
+            # Max steps reached
             return AgentOutput(
                 task_id=self.task.id,
                 content="Maximum iterations reached without completion",
                 success=False,
                 error="Max iterations exceeded",
-                observations=self.observations,
+                observations=[],
             )
+            
         except Exception as e:
             self.logger.error("Agent thread failed", error=str(e))
             return AgentOutput(
@@ -101,99 +264,260 @@ class AgentThread:
                 content=f"Execution failed: {str(e)}",
                 success=False,
                 error=str(e),
-                observations=self.observations,
+                observations=[],
             )
-
-    async def _run_step(self) -> AgentOutput:
-        prompt = self._build_prompt()
-        result = await self.agent.run(user_prompt=prompt, message_history=self.conversation_history)
-        self.conversation_history.extend(result.new_messages())
-        return result.data
-
-    def _build_prompt(self) -> str:
-        if self.current_iteration <= 1:
-            return f"Execute the following task: {self.context.task_goal}"
-        return "Continue with the task based on previous observations."
-
-    async def _run_mock(self) -> AgentOutput:
-        metadata = self.context.session_context.get("request_metadata", {})
-        mock_tool_call = metadata.get("mock_tool_call") if isinstance(metadata, dict) else None
-
-        if isinstance(mock_tool_call, dict):
-            observations = await self._execute_tool_calls([
-                {
-                    "skill": mock_tool_call.get("skill_name", "fs-skill"),
-                    "tool": mock_tool_call.get("tool_name", "list_directory"),
-                    "parameters": mock_tool_call.get("parameters", {}),
-                }
-            ])
-            self.observations.extend(observations)
-            success = all(obs.get("success", False) for obs in observations)
-            content = "Mock execution completed"
-            if observations:
-                content = f"Mock execution completed with {len(observations)} observation(s)"
-            return AgentOutput(
-                task_id=self.task.id,
-                content=content,
-                success=success,
-                error=None if success else observations[0].get("error", "Mock tool failure"),
-                observations=self.observations,
+        finally:
+            self._unregister_from_os_interface()
+    
+    def _build_working_set(self) -> WorkingSet:
+        """Build current working set using WorkingSetBuilder."""
+        return self.ws_builder.build(
+            task_id=self.task.id,
+            task_goal=self.compiled_context.task_goal,
+            event_log=self.event_log,
+            artifact_slots=self.artifact_slots,
+            immutable_input=self.immutable_input,
+            current_phase=self.current_phase,
+            step_number=self.step_count,
+        )
+    
+    async def _generate_action(self, working_set: WorkingSet) -> str:
+        """Generate action using LLM or mock."""
+        prompt = working_set.to_prompt()
+        
+        if self.run_mode == "real" and self.agent:
+            try:
+                result = await self.agent.run(user_prompt=prompt)
+                return str(result.data) if hasattr(result, 'data') else str(result)
+            except Exception as e:
+                self.logger.error("LLM call failed", error=str(e))
+                return self._generate_mock_action(working_set)
+        else:
+            return self._generate_mock_action(working_set)
+    
+    def _generate_mock_action(self, working_set: WorkingSet) -> str:
+        """Generate mock action for testing."""
+        # Check if we have mock tool calls in context
+        mock_tool_call = self.compiled_context.session_context.get("mock_tool_call")
+        if mock_tool_call and self.step_count == 1:
+            return f"""```yaml
+intent: tool_call
+reasoning: "Mock tool call for testing"
+tool_calls:
+  - skill: {mock_tool_call.get("skill_name", "fs-skill")}
+    tool: {mock_tool_call.get("tool_name", "list_directory")}
+    parameters: {mock_tool_call.get("parameters", {})}
+```"""
+        
+        # Default: return final answer
+        return f"""```yaml
+intent: final_answer
+answer: "Mock execution completed for task: {self.compiled_context.task_goal}"
+success: true
+```"""
+    
+    async def _handle_tool_calls(self, parsed: Any) -> None:
+        """Execute tool calls via coordinator."""
+        for tool_call in parsed.tool_calls:
+            # Log tool call
+            self.event_log.append_tool_call(
+                actor=self.thread_id,
+                phase=self.current_phase,
+                skill_name=tool_call.skill_name,
+                tool_name=tool_call.tool_name,
+                parameters=tool_call.parameters,
             )
-
+            
+            # Create execution request
+            request = ExecutionRequest(
+                request_id=f"exec_{uuid.uuid4().hex[:8]}",
+                request_type=RequestType.SKILL_CALL,
+                source=self.thread_id,
+                target=tool_call.skill_name,
+                action=tool_call.tool_name,
+                parameters=tool_call.parameters,
+                context={
+                    "session_id": self.task.session_id,
+                    "task_id": self.task.id,
+                    "step": self.step_count,
+                },
+            )
+            
+            # Submit and execute
+            ticket = await self.coordinator.submit(request)
+            result = await self.coordinator.execute(ticket)
+            
+            # Log result
+            self.event_log.append_tool_result(
+                actor=self.thread_id,
+                phase=self.current_phase,
+                skill_name=tool_call.skill_name,
+                tool_name=tool_call.tool_name,
+                success=result.success,
+                result=result.result,
+                error=result.error,
+            )
+    
+    async def _handle_phase_transition(self, parsed: Any) -> None:
+        """Handle phase transition request."""
+        if not parsed.phase_transition:
+            self.logger.warning("Phase transition intent without transition data")
+            return
+        
+        transition = parsed.phase_transition
+        
+        # Validate transition
+        if transition.from_phase != self.current_phase:
+            self.logger.warning(
+                "Phase transition from wrong phase",
+                expected=transition.from_phase.value,
+                actual=self.current_phase.value,
+            )
+            return
+        
+        # Log transition
+        self.event_log.append_phase_change(
+            actor=self.thread_id,
+            from_phase=transition.from_phase,
+            to_phase=transition.to_phase,
+            reason=transition.reason,
+        )
+        
+        # Execute transition
+        old_phase = self.current_phase
+        self.current_phase = transition.to_phase
+        
+        self.logger.info(
+            "Phase transition",
+            from_phase=old_phase.value,
+            to_phase=self.current_phase.value,
+            reason=transition.reason,
+        )
+    
+    async def _handle_final_answer(self, parsed: Any) -> AgentOutput:
+        """Handle final answer."""
+        answer = parsed.final_answer or parsed.raw_content
+        
+        self.logger.info(
+            "Task completed",
+            success=True,
+            steps=self.step_count,
+        )
+        
         return AgentOutput(
             task_id=self.task.id,
-            content=f"Mock execution completed for task: {self.context.task_goal}",
+            content=answer,
             success=True,
-            observations=self.observations,
+            observations=self._collect_observations(),
         )
-
-    async def _execute_tool_calls(self, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        memory_manager = get_memory_manager()
+    
+    async def _handle_clarification(self, parsed: Any) -> AgentOutput:
+        """Handle clarification request."""
+        question = parsed.clarification_request or "Clarification needed"
+        
+        return AgentOutput(
+            task_id=self.task.id,
+            content=question,
+            success=False,
+            error="Clarification requested",
+            observations=self._collect_observations(),
+        )
+    
+    async def _handle_error(self, parsed: Any) -> AgentOutput:
+        """Handle error intent."""
+        error_msg = parsed.error_message or "Unknown error"
+        
+        return AgentOutput(
+            task_id=self.task.id,
+            content=f"Error: {error_msg}",
+            success=False,
+            error=error_msg,
+            observations=self._collect_observations(),
+        )
+    
+    def _collect_observations(self) -> list[dict[str, Any]]:
+        """Collect observations from event log."""
         observations = []
-        for call in tool_calls:
-            tool_request = ToolCallRequest(
-                request_id=f"{self.task.id}_{datetime.utcnow().timestamp()}",
-                session_id=self.task.session_id,
-                skill_name=call.get("skill", ""),
-                tool_name=call.get("tool", ""),
-                parameters=call.get("parameters", {}),
-            )
-
-            await memory_manager.save_event(
-                self.task.session_id,
-                {
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "session_id": self.task.session_id,
-                    "request_id": self.context.session_context.get("request_id"),
-                    "task_id": self.task.id,
-                    "phase": "tool_request",
-                    "actor": "agent_thread",
-                    "summary": f"{tool_request.skill_name}.{tool_request.tool_name}",
-                    "status": "started",
-                },
-            )
-
-            result = await self.executor_client.execute_tool(tool_request)
-            observation = {
-                "tool": tool_request.tool_name,
-                "skill": tool_request.skill_name,
-                "success": result.success,
-                "result": result.result,
-                "error": result.error,
-            }
-            observations.append(observation)
-
-            await memory_manager.save_event(
-                self.task.session_id,
-                {
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "session_id": self.task.session_id,
-                    "request_id": self.context.session_context.get("request_id"),
-                    "task_id": self.task.id,
-                    "phase": "tool_result",
-                    "actor": "executor",
-                    "summary": f"{tool_request.skill_name}.{tool_request.tool_name}",
-                    "status": "completed" if result.success else "failed",
-                },
-            )
+        for event in self.event_log.get_by_type(EventType.TOOL_RESULT):
+            observations.append({
+                "tool": event.content.get("tool"),
+                "skill": event.content.get("skill"),
+                "success": event.content.get("success"),
+                "result": event.content.get("result"),
+                "error": event.content.get("error"),
+            })
         return observations
+    
+    # ========== Control Interface (for OS Interface) ==========
+    
+    async def _wait_for_resume(self) -> None:
+        """Wait until resumed."""
+        while self.is_paused:
+            await asyncio.sleep(0.1)
+    
+    async def pause(self, reason: str = "") -> None:
+        """Pause thread execution."""
+        self.is_paused = True
+        self.pause_reason = reason
+        self.logger.info("Thread paused", reason=reason)
+    
+    async def resume(self) -> None:
+        """Resume thread execution."""
+        self.is_paused = False
+        self.pause_reason = None
+        self.logger.info("Thread resumed")
+    
+    async def apply_context_update(self, updates: dict[str, Any]) -> None:
+        """Apply context updates from upper layer."""
+        if "phase" in updates:
+            new_phase = updates["phase"]
+            if isinstance(new_phase, str):
+                new_phase = Phase(new_phase)
+            self.current_phase = new_phase
+            self.logger.info("Phase updated via external request", phase=new_phase.value)
+        
+        if "max_steps" in updates:
+            self.max_steps = updates["max_steps"]
+        
+        if "context_notes" in updates:
+            # Add to next working set
+            pass
+    
+    async def handle_system_message(self, message: SystemMessage) -> None:
+        """Handle system message from OS interface."""
+        self.logger.debug(
+            "Received system message",
+            msg_type=message.msg_type,
+            source=message.source,
+        )
+        
+        if message.msg_type == "command":
+            cmd = message.content.get("command")
+            if cmd == "pause":
+                await self.pause(message.content.get("reason", ""))
+            elif cmd == "resume":
+                await self.resume()
+            elif cmd == "update_context":
+                await self.apply_context_update(message.content.get("updates", {}))
+    
+    def get_event_log_export(self) -> dict[str, Any]:
+        """Export full event log for upper layer inspection."""
+        return {
+            "thread_id": self.thread_id,
+            "task_id": self.task.id,
+            "current_phase": self.current_phase.value,
+            "step_count": self.step_count,
+            "is_paused": self.is_paused,
+            "event_log": self.event_log.export_for_debug(),
+            "artifacts": {
+                slot_id: {
+                    "slot_type": slot.slot_type,
+                    "priority": slot.priority,
+                }
+                for slot_id, slot in self.artifact_slots.items()
+            },
+        }
+
+
+# Import asyncio for sleep
+import asyncio
