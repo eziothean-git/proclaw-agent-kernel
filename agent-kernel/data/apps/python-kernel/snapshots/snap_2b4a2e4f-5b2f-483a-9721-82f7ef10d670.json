@@ -1,0 +1,12 @@
+{
+  "id": "snap_2b4a2e4f-5b2f-483a-9721-82f7ef10d670",
+  "session_id": "sess_1773137756851_362j06h7w",
+  "task_id": "e1f91c71-fe37-431e-a7ab-bbb8c45b796f",
+  "working_memory": {
+    "task_goal": "",
+    "result": "Mock execution completed for task: ",
+    "success": true,
+    "observations": []
+  },
+  "timestamp": "2026-03-10T10:18:28.056160"
+}

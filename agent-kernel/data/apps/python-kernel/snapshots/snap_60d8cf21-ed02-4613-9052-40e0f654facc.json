@@ -1,0 +1,12 @@
+{
+  "id": "snap_60d8cf21-ed02-4613-9052-40e0f654facc",
+  "session_id": "sess_1773137756851_362j06h7w",
+  "task_id": "8bd11322-cc1e-454d-9e23-1e1965d397f6",
+  "working_memory": {
+    "task_goal": "帮我列出当前目录的文件",
+    "result": "Mock execution completed for task: 帮我列出当前目录的文件",
+    "success": true,
+    "observations": []
+  },
+  "timestamp": "2026-03-10T10:15:56.917173"
+}

@@ -1,0 +1,20 @@
+{
+  "id": "a5a2181c-49ba-41e7-82d0-71cb3e9a98be",
+  "session_id": "sess_1773137756851_362j06h7w",
+  "process_id": "76689d12-4da4-4a95-b145-086da0e46156",
+  "status": "completed",
+  "goal": "并发请求 4",
+  "constraints": [
+    "Use only explicitly allowed capabilities"
+  ],
+  "allowed_capabilities": [
+    "fs-skill",
+    "shell-skill"
+  ],
+  "forbidden_capabilities": [],
+  "created_at": "2026-03-10T10:18:38.549941",
+  "started_at": "2026-03-10T10:18:38.553722",
+  "completed_at": "2026-03-10T10:18:38.582985",
+  "output": "Mock execution completed for task: 并发请求 4",
+  "error": null
+}

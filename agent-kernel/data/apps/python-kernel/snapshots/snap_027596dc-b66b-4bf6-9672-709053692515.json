@@ -1,0 +1,12 @@
+{
+  "id": "snap_027596dc-b66b-4bf6-9672-709053692515",
+  "session_id": "sess_1773137756851_362j06h7w",
+  "task_id": "4dace3e0-8ed6-4965-932f-e554e792738a",
+  "working_memory": {
+    "task_goal": "并发请求 1",
+    "result": "Mock execution completed for task: 并发请求 1",
+    "success": true,
+    "observations": []
+  },
+  "timestamp": "2026-03-10T10:18:38.585742"
+}

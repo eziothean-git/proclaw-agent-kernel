@@ -87,6 +87,8 @@ class PersistentEventLog(EventLogManager):
                     
                     try:
                         data = json.loads(line)
+                        # Convert string types back to proper types
+                        data = self._deserialize_event_data(data)
                         event = Event(**data)
                         self.log.events.append(event)
                     except json.JSONDecodeError as e:
@@ -112,6 +114,53 @@ class PersistentEventLog(EventLogManager):
                 "Failed to load existing events",
                 error=str(e),
             )
+    
+    def _deserialize_event_data(self, data: dict[str, Any]) -> dict[str, Any]:
+        """
+        Deserialize event data from JSON.
+        
+        Converts string representations back to proper types:
+        - timestamp: str -> datetime
+        - event_type: str -> EventType
+        - phase: str -> Phase
+        
+        Args:
+            data: Raw event data from JSON
+            
+        Returns:
+            Deserialized event data
+        """
+        # Convert timestamp string to datetime
+        if 'timestamp' in data and isinstance(data['timestamp'], str):
+            try:
+                data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+            except ValueError:
+                # If parsing fails, Pydantic will use default_factory
+                pass
+        
+        # Convert event_type string to Enum
+        if 'event_type' in data and isinstance(data['event_type'], str):
+            try:
+                data['event_type'] = EventType(data['event_type'])
+            except ValueError:
+                # If invalid value, try to get from value
+                for et in EventType:
+                    if et.value == data['event_type']:
+                        data['event_type'] = et
+                        break
+        
+        # Convert phase string to Enum
+        if 'phase' in data and isinstance(data['phase'], str):
+            try:
+                data['phase'] = Phase(data['phase'])
+            except ValueError:
+                # If invalid value, try to get from value
+                for p in Phase:
+                    if p.value == data['phase']:
+                        data['phase'] = p
+                        break
+        
+        return data
     
     def append(
         self,

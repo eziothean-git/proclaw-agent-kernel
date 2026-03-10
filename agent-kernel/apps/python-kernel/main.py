@@ -124,8 +124,9 @@ async def health_check():
     }
     
     if _scheduled_dispatcher:
+        import json
         stats = _scheduled_dispatcher.get_statistics()
-        components["scheduled_request_stats"] = stats
+        components["scheduled_request_stats"] = json.dumps(stats)
     
     return HealthCheck(
         status="healthy",

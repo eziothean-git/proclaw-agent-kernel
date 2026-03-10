@@ -1,0 +1,20 @@
+{
+  "id": "78beacf7-9e4e-4148-b024-5580a0be3b75",
+  "session_id": "sess_1773137756851_362j06h7w",
+  "process_id": "42c6f0a2-1716-44ad-81e0-dad1ab723ccd",
+  "status": "completed",
+  "goal": "测试🎉 Emoji Ñoño 中文",
+  "constraints": [
+    "Use only explicitly allowed capabilities"
+  ],
+  "allowed_capabilities": [
+    "fs-skill",
+    "shell-skill"
+  ],
+  "forbidden_capabilities": [],
+  "created_at": "2026-03-10T10:18:28.047971",
+  "started_at": "2026-03-10T10:18:28.051749",
+  "completed_at": "2026-03-10T10:18:28.057588",
+  "output": "Mock execution completed for task: 测试🎉 Emoji Ñoño 中文",
+  "error": null
+}

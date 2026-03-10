@@ -1,0 +1,13 @@
+{
+  "request_id": "1015efff-2cbe-4c9d-8687-c35636bfb071",
+  "session_id": "sess_1773137756851_362j06h7w",
+  "triggered_agent": false,
+  "steps_used": 0,
+  "max_steps": 3,
+  "files_read": [],
+  "artifacts_gathered": 0,
+  "duration_ms": 0,
+  "status": "success",
+  "trigger_reason": "Rule-based compilation sufficient",
+  "created_at": "2026-03-10 10:15:56.911027"
+}

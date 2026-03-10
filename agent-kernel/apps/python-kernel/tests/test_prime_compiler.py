@@ -83,7 +83,9 @@ class TestPersistentEventLog:
         )
         
         assert event_log.task_id == "test_log"
-        assert storage_path.exists()
+        # File is created lazily when first event is appended
+        # Directory is created during initialization
+        assert storage_path.parent.exists()
     
     def test_event_persistence(self, tmp_path):
         """Test events are persisted to file."""
@@ -110,7 +112,8 @@ class TestPersistentEventLog:
         # Check file content
         content = storage_path.read_text()
         assert "test_actor" in content
-        assert "TOOL_CALL" in content
+        # EventType is stored as lowercase string (e.g., "tool_call")
+        assert "tool_call" in content
     
     def test_event_log_reload(self, tmp_path):
         """Test reloading events from file."""

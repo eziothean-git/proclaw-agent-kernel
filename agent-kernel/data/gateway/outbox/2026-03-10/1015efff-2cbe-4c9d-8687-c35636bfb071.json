@@ -1,0 +1,13 @@
+{
+  "header": {
+    "requestId": "1015efff-2cbe-4c9d-8687-c35636bfb071",
+    "sessionId": "sess_1773137756851_362j06h7w",
+    "timestamp": "2026-03-10T10:15:56.917530",
+    "processingTimeMs": 7
+  },
+  "status": "completed",
+  "body": "",
+  "metadata": {
+    "actions": []
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "header": {
+    "timestamp": "2026-03-10T10:15:56.851Z",
+    "platform": "test",
+    "deviceId": "http-194827",
+    "sessionId": "sess_1773137756851_362j06h7w",
+    "requestId": "1015efff-2cbe-4c9d-8687-c35636bfb071",
+    "priority": 0
+  },
+  "metadata": {},
+  "body": "帮我列出当前目录的文件"
+}

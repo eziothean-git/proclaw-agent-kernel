@@ -1,0 +1,20 @@
+{
+  "id": "e1f91c71-fe37-431e-a7ab-bbb8c45b796f",
+  "session_id": "sess_1773137756851_362j06h7w",
+  "process_id": "1b32a0e9-5af3-46c4-aa21-3206096e6f3f",
+  "status": "completed",
+  "goal": "",
+  "constraints": [
+    "Use only explicitly allowed capabilities"
+  ],
+  "allowed_capabilities": [
+    "fs-skill",
+    "shell-skill"
+  ],
+  "forbidden_capabilities": [],
+  "created_at": "2026-03-10T10:18:28.039706",
+  "started_at": "2026-03-10T10:18:28.043959",
+  "completed_at": "2026-03-10T10:18:28.055690",
+  "output": "Mock execution completed for task: ",
+  "error": null
+}
