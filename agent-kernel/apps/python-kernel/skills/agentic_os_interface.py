@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 import structlog
 
-from schemas.models import Request, Session, TaskSnapshot
+from schemas.models import Request
 from thread_runtime.models import (
     RoutingDecision,
     SessionFilters,
@@ -483,10 +483,13 @@ class AgenticOSInterfaceSkill:
             try:
                 task = session_host.get_task_status(task_id)
                 if task:
+                    status_val = (
+                        task.status.value if hasattr(task.status, "value") else str(task.status)
+                    )
                     return {
                         "task_id": task_id,
                         "session_id": session_id,
-                        "status": task.status.value if hasattr(task.status, 'value') else str(task.status),
+                        "status": status_val,
                         "goal": task.goal,
                         "error": task.error,
                     }

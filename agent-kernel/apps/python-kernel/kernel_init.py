@@ -99,6 +99,7 @@ async def _register_local_skills() -> None:
                     "properties": {
                         "command": {"type": "string"},
                         "timeout": {"type": "integer"},
+                        "working_dir": {"type": "string"},
                     },
                     "required": ["command"],
                 },

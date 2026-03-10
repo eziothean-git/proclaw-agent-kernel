@@ -4,12 +4,10 @@ Integration tests for ProcessContextCompilerAgent.
 These tests verify the end-to-end compilation flow.
 """
 import json
-import os
 import pytest
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import Mock, patch, AsyncMock
 
 from schemas.models import (
     IntermediateRepresentation,
@@ -201,7 +199,7 @@ class TestProcessContextCompilerIntegration:
         """Test the full compilation flow via ProcessContextCompiler."""
         compiler = ProcessContextCompiler()
         
-        result = compiler.compile_task_context(
+        result = await compiler.compile_task_context(
             task_id="task_target",
             process_definition=sample_process_definition,
             intermediate_repr=sample_intermediate_repr,
@@ -215,7 +213,8 @@ class TestProcessContextCompilerIntegration:
         assert len(result.allowed_capabilities) > 0
         assert "fs-skill" in result.allowed_capabilities
     
-    def test_compiled_context_structure(
+    @pytest.mark.asyncio
+    async def test_compiled_context_structure(
         self,
         sample_process_definition,
         sample_intermediate_repr,
@@ -224,7 +223,7 @@ class TestProcessContextCompilerIntegration:
         """Test that CompiledContext has the expected structure."""
         compiler = ProcessContextCompiler()
         
-        result = compiler.compile_task_context(
+        result = await compiler.compile_task_context(
             task_id="task_test",
             process_definition=sample_process_definition,
             intermediate_repr=sample_intermediate_repr,

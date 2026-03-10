@@ -3,12 +3,8 @@ Tests for Prime Context Compiler.
 
 Basic validation tests to ensure the implementation works correctly.
 """
-import os
 import sys
-import tempfile
 import pytest
-from datetime import datetime
-from pathlib import Path
 
 # Ensure imports work
 sys.path.insert(0, '/home/eziothean/ProClaw/agent-kernel/apps/python-kernel')
@@ -16,8 +12,7 @@ sys.path.insert(0, '/home/eziothean/ProClaw/agent-kernel/apps/python-kernel')
 from context_compiler.models import ContextPatch, PrimeCompilationSummary, PrimeCompilerConfig
 from context_compiler.persistent_event_log import PersistentEventLog
 from context_compiler.compilation_auditor import PrimeCompilationAuditor
-from context_compiler.prime_compiler_skill import PrimeCompilerSkill
-from context_compiler.master_compiler import MasterContextCompiler, get_master_compiler
+from context_compiler.master_compiler import MasterContextCompiler
 from schemas.models import Request, Session, CompiledContext
 
 
@@ -263,7 +258,8 @@ class TestCompilationAuditor:
 class TestIntegration:
     """Integration tests."""
     
-    def test_full_compile_flow_rule_only(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_full_compile_flow_rule_only(self, tmp_path):
         """Test full compile flow without agent."""
         config = PrimeCompilerConfig(
             max_steps=3,
@@ -285,7 +281,7 @@ class TestIntegration:
         )
         
         # Should not trigger agent for simple greeting
-        context = compiler.compile(request, session, None)
+        context = await compiler.compile(request, session, None)
         
         assert isinstance(context, CompiledContext)
         assert context.session_context["request"]["message"] == "Hello"
