@@ -350,3 +350,130 @@ class ContextCompilerSkillAdapter:
             "success": True,
             "summary": self.skill.get_exploration_summary(),
         }
+
+
+class PrimeCompilerSkillAdapter:
+    """
+    Adapter to make PrimeCompilerSkill work with LocalSkillRegistry.
+    
+    This skill is ONLY exposed to PrimeContextCompilerAgent and provides
+    read-only context gathering capabilities.
+    
+    Key differences from ContextCompilerSkill:
+    - Read-only operations (no context filtering or rule modifications)
+    - Simpler interface focused on gathering information
+    - No write operations to avoid side effects in entry layer
+    """
+    
+    def __init__(self, compiler_agent: Any = None):
+        """
+        Initialize the adapter.
+        
+        Args:
+            compiler_agent: The PrimeContextCompilerAgent instance
+        """
+        self.skill = None
+        self._pending_compiler_agent = compiler_agent
+    
+    def attach_compiler_agent(self, compiler_agent: Any) -> None:
+        """
+        Attach the compiler agent to this adapter.
+        
+        This must be called before any skill methods are invoked.
+        """
+        from context_compiler.prime_compiler_skill import PrimeCompilerSkill
+        self.skill = PrimeCompilerSkill(compiler_agent)
+        self._pending_compiler_agent = None
+    
+    async def register_artifact_slot(
+        self,
+        slot_type: str,
+        content: Any,
+        priority: int = 5,
+        slot_id: str | None = None,
+    ) -> dict:
+        """
+        Register discovered information as an Artifact Slot.
+        
+        Args:
+            slot_type: Type of artifact (e.g., session_summary, task_output)
+            content: The artifact content
+            priority: Priority for Working Set selection (1-10)
+            slot_id: Optional custom slot ID
+        """
+        if not self.skill:
+            return {"success": False, "error": "Skill not initialized"}
+        
+        return await self.skill.register_artifact_slot(
+            slot_type=slot_type,
+            content=content,
+            priority=priority,
+            slot_id=slot_id,
+        )
+    
+    async def get_artifact_slot(self, slot_id: str) -> dict:
+        """
+        Get an existing artifact slot.
+        
+        Args:
+            slot_id: ID of the slot to retrieve
+        """
+        if not self.skill:
+            return {"success": False, "error": "Skill not initialized"}
+        
+        return await self.skill.get_artifact_slot(slot_id)
+    
+    async def mark_exploration_complete(
+        self,
+        reason: str,
+        confidence: float,
+    ) -> dict:
+        """
+        Signal that exploration is complete.
+        
+        Args:
+            reason: Explanation of why exploration is complete
+            confidence: Confidence score (0.0-1.0)
+        """
+        if not self.skill:
+            return {"success": False, "error": "Skill not initialized"}
+        
+        return await self.skill.mark_exploration_complete(
+            reason=reason,
+            confidence=confidence,
+        )
+    
+    async def get_exploration_summary(self) -> dict:
+        """Get summary of exploration progress."""
+        if not self.skill:
+            return {"success": False, "error": "Skill not initialized"}
+        
+        return {
+            "success": True,
+            "summary": self.skill.get_exploration_summary(),
+        }
+    
+    async def get_all_artifacts(self) -> dict:
+        """Get all registered artifacts."""
+        if not self.skill:
+            return {"success": False, "error": "Skill not initialized"}
+        
+        return {
+            "success": True,
+            "artifacts": self.skill.get_all_artifacts(),
+        }
+    
+    async def get_artifacts_by_type(self, slot_type: str) -> dict:
+        """
+        Get artifacts of a specific type.
+        
+        Args:
+            slot_type: Type of artifacts to retrieve
+        """
+        if not self.skill:
+            return {"success": False, "error": "Skill not initialized"}
+        
+        return {
+            "success": True,
+            "artifacts": self.skill.get_artifacts_by_type(slot_type),
+        }
