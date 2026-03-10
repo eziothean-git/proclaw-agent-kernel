@@ -15,12 +15,11 @@ export class PersistenceService implements OnModuleInit {
   private currentDate: string;
 
   constructor(private readonly configService: ConfigService) {
-    // Use GATEWAY_STORAGE_PATH if available, fall back to STORAGE_BASE_PATH
-    const gatewayPath = this.configService.get<string>('GATEWAY_STORAGE_PATH');
-    this.basePath = gatewayPath 
-      ? path.join(gatewayPath, 'request-manager')
-      : this.configService.get<string>('STORAGE_BASE_PATH', '/var/gateway/request-manager');
-    this.inboxPath = path.join(this.basePath, 'inbox');
+    // Use GATEWAY_STORAGE_PATH to share inbox with Gateway and Python Kernel
+    const gatewayPath = this.configService.get<string>('GATEWAY_STORAGE_PATH', '/var/gateway');
+    this.basePath = path.join(gatewayPath, 'request-manager');
+    // Use the shared gateway inbox path so Python Kernel can see requests
+    this.inboxPath = path.join(gatewayPath, 'inbox');
     this.auditPath = path.join(this.basePath, 'audit');
     this.statePath = path.join(this.basePath, 'state');
     this.currentDate = this.getDateString();

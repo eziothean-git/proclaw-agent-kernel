@@ -1,6 +1,5 @@
 import { Controller, Sse, Query, MessageEvent, Logger } from '@nestjs/common';
-import { Observable, Subject, interval } from 'rxjs';
-import { takeUntil, map, filter } from 'rxjs/operators';
+import { Observable, Subject } from 'rxjs';
 import { GatewayService } from './gateway.service';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 
@@ -28,7 +27,6 @@ interface ChatStreamEvent {
 @Controller('api/v1/chat')
 export class SseController {
   private readonly logger = new Logger(SseController.name);
-  private readonly HEARTBEAT_INTERVAL = 15000; // 15 seconds
 
   constructor(private readonly gatewayService: GatewayService) {}
 
@@ -36,7 +34,6 @@ export class SseController {
   @ApiOperation({ summary: 'Stream chat request with real-time updates via SSE' })
   async streamChat(@Query() query: ChatStreamQueryDto): Promise<Observable<MessageEvent>> {
     const subject = new Subject<ChatStreamEvent>();
-    const destroy$ = new Subject<void>();
 
     // Parse metadata if provided
     let metadata: Record<string, unknown> | undefined;
@@ -48,7 +45,7 @@ export class SseController {
       }
     }
 
-    // Start the chat request
+    // Start the chat request and wait for response
     this.gatewayService
       .handleChatRequest({
         message: query.message,
@@ -70,81 +67,33 @@ export class SseController {
           message: 'Request accepted and queued for processing',
         });
 
-        // Start polling for status updates
-        const pollInterval = setInterval(async () => {
-          try {
-            const status = await this.gatewayService.getRequestStatus(requestId);
+        try {
+          // Wait for response (event-driven, not polling!)
+          // This will resolve immediately when webhook callback is received
+          const response = await this.gatewayService.waitForResponse(requestId, 5 * 60 * 1000); // 5 min timeout
 
-            // Skip 'not_found' status - will retry on next poll
-            if (status.status === 'not_found') {
-              return;
-            }
+          // Emit completion
+          subject.next({
+            type: 'complete',
+            timestamp: new Date().toISOString(),
+            requestId,
+            sessionId,
+            response: response,
+          });
 
-            // Emit status update
-            subject.next({
-              type: 'status',
-              timestamp: new Date().toISOString(),
-              requestId,
-              sessionId,
-              status: status.status,
-            });
-
-            // If completed or failed, emit final event and complete
-            if (status.status === 'completed' || status.status === 'failed') {
-              clearInterval(pollInterval);
-
-              if (status.status === 'completed' && status.response) {
-                subject.next({
-                  type: 'complete',
-                  timestamp: new Date().toISOString(),
-                  requestId,
-                  sessionId,
-                  response: status.response,
-                });
-              } else if (status.status === 'failed') {
-                subject.next({
-                  type: 'error',
-                  timestamp: new Date().toISOString(),
-                  requestId,
-                  sessionId,
-                  error: 'Request processing failed',
-                });
-              }
-
-              subject.complete();
-              destroy$.next();
-              destroy$.complete();
-            }
-          } catch (error) {
-            this.logger.error(`Error polling request ${requestId}: ${error.message}`);
-            clearInterval(pollInterval);
-            subject.next({
-              type: 'error',
-              timestamp: new Date().toISOString(),
-              requestId,
-              sessionId,
-              error: `Polling error: ${error.message}`,
-            });
-            subject.complete();
-            destroy$.next();
-            destroy$.complete();
-          }
-        }, 500); // Poll every 500ms
-
-        // Set a maximum timeout (5 minutes)
-        setTimeout(() => {
-          clearInterval(pollInterval);
+          subject.complete();
+        } catch (error) {
+          // Timeout or error
+          this.logger.error(`Request ${requestId} failed or timeout: ${error.message}`);
           subject.next({
             type: 'error',
             timestamp: new Date().toISOString(),
             requestId,
             sessionId,
-            error: 'Request timeout after 5 minutes',
+            error: error.message || 'Request processing failed',
           });
           subject.complete();
-          destroy$.next();
-          destroy$.complete();
-        }, 5 * 60 * 1000);
+        }
       })
       .catch((error) => {
         this.logger.error(`Failed to start chat stream: ${error.message}`);
@@ -155,39 +104,16 @@ export class SseController {
           error: `Failed to start request: ${error.message}`,
         });
         subject.complete();
-        destroy$.next();
-        destroy$.complete();
       });
 
-    // Create heartbeat stream
-    const heartbeat$ = interval(this.HEARTBEAT_INTERVAL).pipe(
-      map(() => ({
-        type: 'heartbeat',
-        timestamp: new Date().toISOString(),
-        requestId: 'heartbeat',
-      } as ChatStreamEvent)),
-      takeUntil(destroy$),
+    // Convert to MessageEvent stream
+    return subject.asObservable().pipe(
+      map((event): MessageEvent => ({
+        data: JSON.stringify(event),
+      })),
     );
-
-    // Combine main events with heartbeats
-    return new Observable<MessageEvent>((observer) => {
-      const subscription = subject.subscribe({
-        next: (event) => observer.next({ data: event } as MessageEvent),
-        error: (err) => observer.error(err),
-        complete: () => observer.complete(),
-      });
-
-      const heartbeatSubscription = heartbeat$.subscribe({
-        next: (event) => observer.next({ data: event } as MessageEvent),
-      });
-
-      // Cleanup on unsubscribe
-      return () => {
-        subscription.unsubscribe();
-        heartbeatSubscription.unsubscribe();
-        destroy$.next();
-        destroy$.complete();
-      };
-    });
   }
 }
+
+// Need to import map
+import { map } from 'rxjs/operators';

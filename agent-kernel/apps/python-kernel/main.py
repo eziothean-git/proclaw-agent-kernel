@@ -8,6 +8,7 @@ import time
 import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Optional
 from uuid import uuid4
 
 import httpx
@@ -26,6 +27,7 @@ from scheduled_dispatcher import ScheduledRequestStorage, ScheduledRequestDispat
 from session_host.session_host import get_session_host
 from storage.runtime_store import get_memory_manager
 from thread_runtime.scheduler import get_scheduler
+from telemetry import get_telemetry_manager, emit_telemetry
 
 logger = structlog.get_logger()
 
@@ -192,8 +194,34 @@ async def process_request_async(request_id: str, callback_url: str):
             session_context=master_context
         )
         
-        # Session Host execution
-        result = await get_session_host(session).handle_request(request, intermediate_repr)
+        # FAST PATH: Simple conversation without capabilities - skip Session Host
+        has_complex_tasks = any(
+            len(p.get("capabilities", [])) > 0 or p.get("name") not in ["respond", "conversation"]
+            for p in intermediate_repr.processes
+        )
+        
+        if intermediate_repr.intent == "conversation" and not has_complex_tasks:
+            logger.info(
+                "Fast path for conversation - skipping Session Host",
+                request_id=request_id,
+                process_count=len(intermediate_repr.processes)
+            )
+            
+            # Generate direct response using LLM
+            from llm_client import get_llm_client
+            client = get_llm_client()
+            client.initialize(system_prompt="You are a helpful AI assistant.")
+            
+            response_text = await client.generate(request.message)
+            
+            result = {
+                "status": "completed",
+                "output": response_text,
+                "actions": [],
+            }
+        else:
+            # SLOW PATH: Complex tasks - use full Session Host execution
+            result = await get_session_host(session).handle_request(request, intermediate_repr)
         
         # Update request status
         request.status = RequestStatus.COMPLETED if result["status"] == "completed" else RequestStatus.FAILED
@@ -451,6 +479,56 @@ async def get_task_status(task_id: str):
         "completed_at": task.completed_at.isoformat() if task.completed_at else None,
         "output": task.output,
         "error": task.error,
+    }
+
+
+@app.get("/telemetry/stream")
+async def telemetry_stream(request_id: Optional[str] = None):
+    """
+    SSE endpoint for real-time telemetry streaming.
+    
+    Args:
+        request_id: Optional request ID to filter events
+        
+    Returns:
+        SSE stream of telemetry events
+    """
+    from fastapi.responses import StreamingResponse
+    
+    telemetry_manager = get_telemetry_manager()
+    
+    async def event_generator():
+        async for data in telemetry_manager.event_stream(request_id):
+            yield data
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
+
+
+@app.get("/telemetry/requests/{request_id}")
+async def get_telemetry_events(request_id: str):
+    """
+    Get all telemetry events for a specific request.
+    
+    Args:
+        request_id: Request ID
+        
+    Returns:
+        List of telemetry events
+    """
+    telemetry_manager = get_telemetry_manager()
+    events = telemetry_manager.get_request_events(request_id)
+    return {
+        "request_id": request_id,
+        "event_count": len(events),
+        "events": events,
     }
 
 

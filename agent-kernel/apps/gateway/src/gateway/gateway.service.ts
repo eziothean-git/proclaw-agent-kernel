@@ -186,7 +186,17 @@ export class GatewayService {
     status: 'pending' | 'processing' | 'completed' | 'failed' | 'not_found';
     response?: OutputMessage;
   }> {
-    // First check Request Manager via gRPC
+    // First check outbox - if response exists, request is completed
+    const outboxResponse = await this.storageService.getResponseFromOutbox(requestId);
+    if (outboxResponse) {
+      return {
+        requestId,
+        status: outboxResponse.status as 'completed' | 'failed',
+        response: outboxResponse,
+      };
+    }
+
+    // Then check Request Manager via gRPC
     try {
       const rmStatus = await this.requestManagerClient.getRequestStatus(requestId);
       
@@ -202,34 +212,16 @@ export class GatewayService {
 
       const status = statusMap[rmStatus.status] || 'not_found';
 
-      if (status === 'completed' || status === 'failed') {
-        const response = await this.storageService.getResponseFromOutbox(requestId);
-        return {
-          requestId,
-          status,
-          response: response || undefined,
-        };
-      }
-
       return {
         requestId,
         status,
       };
     } catch (error) {
-      this.logger.error(`Failed to get status from Request Manager: ${error.message}`);
+      this.logger.debug(`Failed to get status from Request Manager: ${error.message}`);
       
       // Fallback to local storage
       const status = await this.storageService.getRequestStatus(requestId);
       
-      if (status.status === 'completed' || status.status === 'failed') {
-        const response = await this.storageService.getResponseFromOutbox(requestId);
-        return {
-          requestId,
-          status: status.status,
-          response: response || undefined,
-        };
-      }
-
       return {
         requestId,
         status: status.status,

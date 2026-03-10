@@ -175,7 +175,7 @@ class GatewayClient:
                     yield ChatStreamEvent(
                         type=EventType.ERROR,
                         timestamp=datetime.now(),
-                        request_id="client",
+                        requestId="client",
                         error=f"Connection failed after {self.max_retries} retries: {last_error}",
                     )
                     return

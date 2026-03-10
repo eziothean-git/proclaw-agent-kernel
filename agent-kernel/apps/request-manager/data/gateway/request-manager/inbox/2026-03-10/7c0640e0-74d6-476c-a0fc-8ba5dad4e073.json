@@ -1,0 +1,10 @@
+{
+  "requestId": "7c0640e0-74d6-476c-a0fc-8ba5dad4e073",
+  "sessionId": "sess_1773165304412_k52msx2ae",
+  "userId": "test_user",
+  "priority": 0,
+  "body": "{\"header\":{\"timestamp\":\"2026-03-10T17:55:04.413Z\",\"platform\":\"curl_test\",\"deviceId\":\"http-215510\",\"userId\":\"test_user\",\"sessionId\":\"sess_1773165304412_k52msx2ae\",\"requestId\":\"7c0640e0-74d6-476c-a0fc-8ba5dad4e073\",\"priority\":0},\"metadata\":{},\"body\":\"你好\"}",
+  "metadata": {},
+  "receivedAt": "2026-03-10T17:55:04.414Z",
+  "filePath": "data/gateway/request-manager/inbox/2026-03-10/7c0640e0-74d6-476c-a0fc-8ba5dad4e073.json"
+}

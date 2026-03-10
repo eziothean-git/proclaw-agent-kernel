@@ -1,0 +1,10 @@
+{
+  "requestId": "c1043241-d62d-42f4-9511-ecba8037ab88",
+  "sessionId": "sess_1773164844507_8qleq3hi3",
+  "userId": "proclaw-user",
+  "priority": 0,
+  "body": "{\"header\":{\"timestamp\":\"2026-03-10T17:47:24.510Z\",\"platform\":\"tui\",\"deviceId\":\"http-211605\",\"userId\":\"proclaw-user\",\"sessionId\":\"sess_1773164844507_8qleq3hi3\",\"requestId\":\"c1043241-d62d-42f4-9511-ecba8037ab88\",\"priority\":0},\"metadata\":{},\"body\":\"你好\"}",
+  "metadata": {},
+  "receivedAt": "2026-03-10T17:47:24.518Z",
+  "filePath": "data/gateway/request-manager/inbox/2026-03-10/c1043241-d62d-42f4-9511-ecba8037ab88.json"
+}

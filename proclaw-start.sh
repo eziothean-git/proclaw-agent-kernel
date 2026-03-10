@@ -32,6 +32,7 @@ export ARK_API_KEY="${ARK_API_KEY:-62663763-1f8a-4c10-862e-b5d760b19fba}"
 export LLM_PROVIDER="${LLM_PROVIDER:-ark}"
 export ARK_MODEL="${ARK_MODEL:-glm-4-7-251222}"
 export GATEWAY_STORAGE_PATH="${PROJECT_ROOT}/data/gateway"
+export GATEWAY_INBOX_PATH="${PROJECT_ROOT}/data/gateway/inbox"
 export DATA_PATH="${PROJECT_ROOT}/data"
 export GATEWAY_URL="http://localhost:${GATEWAY_PORT}"
 
@@ -108,17 +109,22 @@ stop_service_on_port() {
 # 检查并停止现有服务
 stop_existing_services() {
     print_header "🛑 停止现有服务"
-    
+
     # 停止 Gateway
     stop_service_on_port ${GATEWAY_PORT} "Gateway"
-    
+
     # 停止 Python Kernel
     stop_service_on_port ${KERNEL_PORT} "Python Kernel"
-    
+
+    # 停止 Request Manager
+    print_info "停止 Request Manager..."
+    pkill -f "request-manager" 2>/dev/null || true
+    sleep 1
+
     # 清理可能残留的Python缓存
     find ${KERNEL_DIR} -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
     find ${KERNEL_DIR} -type f -name "*.pyc" -delete 2>/dev/null || true
-    
+
     print_success "服务清理完成"
     sleep 1
 }
@@ -145,6 +151,33 @@ wait_for_service() {
     
     echo ""
     print_error "${name} 启动超时"
+    return 1
+}
+
+# 启动 Request Manager
+start_request_manager() {
+    print_header "📦 启动 Request Manager"
+    
+    cd ${PROJECT_ROOT}/apps/request-manager
+    
+    # 启动服务
+    print_info "正在启动 Request Manager (gRPC:50052)..."
+    nohup npm start > /tmp/request-manager.log 2>&1 &
+    
+    # 等待服务就绪
+    local max_attempts=30
+    local attempt=1
+    while [ $attempt -le $max_attempts ]; do
+        if lsof -Pi :50052 -sTCP:LISTEN >/dev/null 2>&1; then
+            print_success "Request Manager 启动成功"
+            return 0
+        fi
+        sleep 1
+        attempt=$((attempt + 1))
+    done
+    
+    print_error "Request Manager 启动失败"
+    print_info "查看日志: tail -f /tmp/request-manager.log"
     return 1
 }
 
@@ -191,6 +224,16 @@ start_kernel() {
     if wait_for_service "http://localhost:${KERNEL_PORT}/health" "Python Kernel"; then
         local version=$(curl -s http://localhost:${KERNEL_PORT}/health | grep -o '"version":"[^"]*"' | cut -d'"' -f4)
         print_success "Python Kernel 启动成功 (版本: ${version})"
+        
+        # 验证遥测端点
+        print_info "验证遥测端点..."
+        sleep 1
+        if curl -s "http://localhost:${KERNEL_PORT}/telemetry/stream" -N -H "Accept: text/event-stream" --max-time 2 2>/dev/null | head -1 >/dev/null 2>&1; then
+            print_success "遥测端点已就绪 (/telemetry/stream)"
+        else
+            print_warning "遥测端点可能未完全就绪（将在首次请求时自动启动）"
+        fi
+        
         return 0
     else
         print_error "Python Kernel 启动失败"
@@ -202,17 +245,15 @@ start_kernel() {
 # 显示服务状态
 show_status() {
     print_header "📊 服务状态"
-    
-    echo -e "${BOLD}Gateway:${NC}"
-    if check_port ${GATEWAY_PORT}; then
-        local health=$(curl -s http://localhost:${GATEWAY_PORT}/api/v1/health 2>/dev/null)
+
+    echo -e "${BOLD}Request Manager:${NC}"
+    if lsof -Pi :50052 -sTCP:LISTEN >/dev/null 2>&1; then
         echo "  状态: ${GREEN}运行中${NC}"
-        echo "  端口: ${GATEWAY_PORT}"
-        echo "  版本: $(echo ${health} | grep -o '"version":"[^"]*"' | cut -d'"' -f4)"
+        echo "  端口: 50052 (gRPC)"
     else
         echo "  状态: ${RED}未运行${NC}"
     fi
-    
+
     echo ""
     echo -e "${BOLD}Python Kernel:${NC}"
     if check_port ${KERNEL_PORT}; then
@@ -223,11 +264,27 @@ show_status() {
     else
         echo "  状态: ${RED}未运行${NC}"
     fi
-    
+
+    echo ""
+    echo -e "${BOLD}Gateway:${NC}"
+    if check_port ${GATEWAY_PORT}; then
+        local health=$(curl -s http://localhost:${GATEWAY_PORT}/api/v1/health 2>/dev/null)
+        echo "  状态: ${GREEN}运行中${NC}"
+        echo "  端口: ${GATEWAY_PORT}"
+        echo "  版本: $(echo ${health} | grep -o '"version":"[^"]*"' | cut -d'"' -f4)"
+    else
+        echo "  状态: ${RED}未运行${NC}"
+    fi
+
+    echo ""
+    echo -e "${BOLD}遥测端点:${NC}"
+    echo "  Telemetry Stream: http://localhost:${KERNEL_PORT}/telemetry/stream"
+
     echo ""
     echo -e "${BOLD}日志文件:${NC}"
+    echo "  Request Manager: /tmp/request-manager.log"
+    echo "  Python Kernel:  ${KERNEL_LOG}"
     echo "  Gateway: ${GATEWAY_LOG}"
-    echo "  Kernel:  ${KERNEL_LOG}"
 }
 
 # 启动 TUI
@@ -302,17 +359,22 @@ EOF
     fi
     
     print_success "依赖检查通过"
-    
+
     # 停止现有服务
     stop_existing_services
-    
-    # 启动 Gateway
-    if ! start_gateway; then
+
+    # 启动 Request Manager (必须先于 Gateway 启动)
+    if ! start_request_manager; then
         exit 1
     fi
-    
+
     # 启动 Python Kernel
     if ! start_kernel; then
+        exit 1
+    fi
+
+    # 启动 Gateway (必须在 Request Manager 之后启动)
+    if ! start_gateway; then
         exit 1
     fi
     
@@ -337,7 +399,25 @@ case "${1:-}" in
     --logs|-l)
         print_header "📋 实时日志"
         echo "按 Ctrl+C 退出日志查看"
-        tail -f ${GATEWAY_LOG} ${KERNEL_LOG} 2>/dev/null
+        tail -f /tmp/request-manager.log ${KERNEL_LOG} ${GATEWAY_LOG} 2>/dev/null
+        exit 0
+        ;;
+    --telemetry|-t)
+        print_header "📡 测试遥测数据流"
+        if check_port ${KERNEL_PORT}; then
+            print_info "正在测试遥测端点..."
+            print_info "等待遥测事件 (按 Ctrl+C 停止)..."
+            echo ""
+            curl -s -N "http://localhost:${KERNEL_PORT}/telemetry/stream" \
+                -H "Accept: text/event-stream" 2>/dev/null | while read line; do
+                if [[ $line == data:* ]]; then
+                    echo "$(date '+%H:%M:%S') $line"
+                fi
+            done
+        else
+            print_error "Python Kernel 未运行"
+            exit 1
+        fi
         exit 0
         ;;
     --help|-h)
@@ -346,15 +426,17 @@ case "${1:-}" in
         echo "用法: $0 [选项]"
         echo ""
         echo "选项:"
-        echo "  --status, -s    显示服务状态"
-        echo "  --stop          停止所有服务"
-        echo "  --logs, -l      查看实时日志"
-        echo "  --help, -h      显示此帮助"
+        echo "  --status, -s     显示服务状态"
+        echo "  --stop           停止所有服务"
+        echo "  --logs, -l       查看实时日志"
+        echo "  --telemetry, -t  测试遥测数据流"
+        echo "  --help, -h       显示此帮助"
         echo ""
         echo "示例:"
-        echo "  $0              # 启动所有服务并进入TUI"
-        echo "  $0 --status     # 查看服务状态"
-        echo "  $0 --stop       # 停止所有服务"
+        echo "  $0               # 启动所有服务并进入TUI"
+        echo "  $0 --status      # 查看服务状态"
+        echo "  $0 --stop        # 停止所有服务"
+        echo "  $0 --telemetry   # 测试遥测数据流"
         exit 0
         ;;
     *)

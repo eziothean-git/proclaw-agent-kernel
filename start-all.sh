@@ -13,6 +13,7 @@ export LLM_PROVIDER="ark"
 export ARK_MODEL="doubao-seed-2-0-mini-260215"
 export DATA_PATH="/home/eziothean/ProClaw/agent-kernel/data"
 export GATEWAY_STORAGE_PATH="/home/eziothean/ProClaw/agent-kernel/data/gateway"
+export GATEWAY_INBOX_PATH="/home/eziothean/ProClaw/agent-kernel/data/gateway/inbox"
 export GATEWAY_URL="http://localhost:3000"
 export PYTHON_KERNEL_URL="http://localhost:8000"
 
@@ -71,6 +72,15 @@ else
 fi
 
 echo ""
+echo "5️⃣  验证遥测端点..."
+sleep 2
+if curl -s http://localhost:8000/telemetry/stream -N -H "Accept: text/event-stream" --max-time 3 2>/dev/null | head -1 >/dev/null 2>&1; then
+    echo "   ✅ 遥测端点正常 (/telemetry/stream)"
+else
+    echo "   ⚠️  遥测端点可能未就绪（将在首次请求时自动启动）"
+fi
+
+echo ""
 echo "========================================"
 echo "✅ 所有服务已启动！"
 echo "========================================"
@@ -79,12 +89,26 @@ echo "服务地址:"
 echo "  Gateway:       http://localhost:3000"
 echo "  Request Manager: gRPC://localhost:50052"
 echo "  Python Kernel: http://localhost:8000"
+echo "  遥测流:        http://localhost:8000/telemetry/stream"
 echo ""
-echo "现在可以使用:"
-echo "  proclaw"
+echo "可用命令:"
+echo "  proclaw              # 启动 TUI 客户端"
+echo "  ./start-all.sh tui   # 启动服务并自动打开 TUI"
 echo ""
 echo "或手动测试:"
 echo "  curl -X POST http://localhost:3000/api/v1/chat \\"
 echo "    -H \"Content-Type: application/json\" \\"
 echo "    -d '{\"message\": \"你好\", \"user_id\": \"test\"}'"
 echo ""
+echo "查看日志:"
+echo "  tail -f /tmp/request-manager.log"
+echo "  tail -f /tmp/proclaw-kernel.log"
+echo "  tail -f /tmp/proclaw-gateway.log"
+echo ""
+
+# Check if TUI should be launched
+if [ "${1:-}" = "tui" ] || [ "${1:-}" = "--tui" ]; then
+    echo "🖥️  启动 TUI 客户端..."
+    cd "${PROJECT_ROOT}/apps/gateway/clients/tui"
+    python -m proclaw_tui.main
+fi

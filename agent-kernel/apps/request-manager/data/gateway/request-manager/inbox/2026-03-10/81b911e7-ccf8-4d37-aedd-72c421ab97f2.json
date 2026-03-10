@@ -1,0 +1,10 @@
+{
+  "requestId": "81b911e7-ccf8-4d37-aedd-72c421ab97f2",
+  "sessionId": "sess_1773165416440_8fcesn4h1",
+  "userId": "test_tui",
+  "priority": 0,
+  "body": "{\"header\":{\"timestamp\":\"2026-03-10T17:56:56.441Z\",\"platform\":\"test\",\"deviceId\":\"http-215510\",\"userId\":\"test_tui\",\"sessionId\":\"sess_1773165416440_8fcesn4h1\",\"requestId\":\"81b911e7-ccf8-4d37-aedd-72c421ab97f2\",\"priority\":0},\"metadata\":{},\"body\":\"你好\"}",
+  "metadata": {},
+  "receivedAt": "2026-03-10T17:56:56.442Z",
+  "filePath": "data/gateway/request-manager/inbox/2026-03-10/81b911e7-ccf8-4d37-aedd-72c421ab97f2.json"
+}

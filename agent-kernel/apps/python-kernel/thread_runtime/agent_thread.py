@@ -21,6 +21,7 @@ from executors_client.coordinator_interface import get_execution_coordinator
 from llm_client import get_llm_client, LLMClient
 from schemas.models import AgentOutput, CompiledContext, TaskSnapshot
 from skills.agentic_os_interface import get_os_interface_skill
+from telemetry import emit_telemetry
 from thread_runtime.event_log import EventLogManager
 from thread_runtime.models import (
     ArtifactSlot,
@@ -208,18 +209,54 @@ success: true | false
         Returns:
             AgentOutput with final result
         """
+        import time
+        thread_start_time = time.perf_counter()
+        
         self.logger.info(
             "Starting agent thread execution",
             goal=self.compiled_context.task_goal,
         )
         
+        # Telemetry: Thread execution started
+        emit_telemetry(
+            request_id=self.task.id,
+            layer=6,
+            layer_name="Agent Thread",
+            component="AgentThread",
+            operation="execution",
+            status="start",
+            message=f"Starting execution: {self.compiled_context.task_goal[:50]}...",
+            session_id=self.task.session_id,
+            phase=self.current_phase.value,
+            step=self.step_count,
+            total_steps=self.max_steps,
+        )
+        
         try:
             while self.step_count < self.max_steps:
+                step_start_time = time.perf_counter()
+                
                 # Check if paused
                 if self.is_paused:
                     await self._wait_for_resume()
                 
                 self.step_count += 1
+                
+                # Telemetry: Step started
+                emit_telemetry(
+                    request_id=self.task.id,
+                    layer=6,
+                    layer_name="Agent Thread",
+                    component="AgentThread",
+                    operation="step",
+                    status="progress",
+                    message=f"Step {self.step_count}/{self.max_steps} - Phase: {self.current_phase.value}",
+                    session_id=self.task.session_id,
+                    phase=self.current_phase.value,
+                    step=self.step_count,
+                    total_steps=self.max_steps,
+                    progress_pct=int((self.step_count / self.max_steps) * 100),
+                )
                 
                 # SEE: Build working set
                 working_set = self._build_working_set()
@@ -254,6 +291,24 @@ success: true | false
                     # Continue loop
             
             # Max steps reached
+            elapsed_ms = int((time.perf_counter() - thread_start_time) * 1000)
+            
+            # Telemetry: Max steps reached
+            emit_telemetry(
+                request_id=self.task.id,
+                layer=6,
+                layer_name="Agent Thread",
+                component="AgentThread",
+                operation="execution",
+                status="error",
+                message="Maximum iterations reached without completion",
+                session_id=self.task.session_id,
+                phase=self.current_phase.value,
+                step=self.step_count,
+                total_steps=self.max_steps,
+                elapsed_ms=elapsed_ms,
+            )
+            
             return AgentOutput(
                 task_id=self.task.id,
                 content="Maximum iterations reached without completion",
@@ -263,6 +318,25 @@ success: true | false
             )
             
         except Exception as e:
+            elapsed_ms = int((time.perf_counter() - thread_start_time) * 1000)
+            
+            # Telemetry: Execution failed
+            emit_telemetry(
+                request_id=self.task.id,
+                layer=6,
+                layer_name="Agent Thread",
+                component="AgentThread",
+                operation="execution",
+                status="error",
+                message=f"Execution failed: {str(e)}",
+                session_id=self.task.session_id,
+                phase=self.current_phase.value,
+                step=self.step_count,
+                total_steps=self.max_steps,
+                elapsed_ms=elapsed_ms,
+                details={"error": str(e)},
+            )
+            
             self.logger.error("Agent thread failed", error=str(e))
             return AgentOutput(
                 task_id=self.task.id,
@@ -304,6 +378,9 @@ success: true | false
     async def _handle_tool_calls(self, parsed: Any) -> None:
         """Execute tool calls via coordinator."""
         for tool_call in parsed.tool_calls:
+            import time
+            tool_start_time = time.perf_counter()
+            
             # Log tool call
             self.event_log.append_tool_call(
                 actor=self.thread_id,
@@ -311,6 +388,26 @@ success: true | false
                 skill_name=tool_call.skill_name,
                 tool_name=tool_call.tool_name,
                 parameters=tool_call.parameters,
+            )
+            
+            # Telemetry: Tool call
+            emit_telemetry(
+                request_id=self.task.id,
+                layer=6,
+                layer_name="Agent Thread",
+                component="AgentThread",
+                operation="tool_call",
+                status="progress",
+                message=f"Calling {tool_call.skill_name}.{tool_call.tool_name}",
+                session_id=self.task.session_id,
+                phase=self.current_phase.value,
+                step=self.step_count,
+                total_steps=self.max_steps,
+                details={
+                    "skill_name": tool_call.skill_name,
+                    "tool_name": tool_call.tool_name,
+                    "parameters": tool_call.parameters,
+                },
             )
             
             # Create execution request
@@ -332,6 +429,8 @@ success: true | false
             ticket = await self.coordinator.submit(request)
             result = await self.coordinator.execute(ticket)
             
+            tool_elapsed_ms = int((time.perf_counter() - tool_start_time) * 1000)
+            
             # Log result
             self.event_log.append_tool_result(
                 actor=self.thread_id,
@@ -341,6 +440,28 @@ success: true | false
                 success=result.success,
                 result=result.result,
                 error=result.error,
+            )
+            
+            # Telemetry: Tool result
+            emit_telemetry(
+                request_id=self.task.id,
+                layer=6,
+                layer_name="Agent Thread",
+                component="AgentThread",
+                operation="tool_result",
+                status="progress" if result.success else "error",
+                message=f"{'✓' if result.success else '✗'} {tool_call.skill_name}.{tool_call.tool_name}",
+                session_id=self.task.session_id,
+                phase=self.current_phase.value,
+                step=self.step_count,
+                total_steps=self.max_steps,
+                elapsed_ms=tool_elapsed_ms,
+                details={
+                    "skill_name": tool_call.skill_name,
+                    "tool_name": tool_call.tool_name,
+                    "success": result.success,
+                    "has_error": result.error is not None,
+                },
             )
     
     async def _handle_phase_transition(self, parsed: Any) -> None:
@@ -378,15 +499,51 @@ success: true | false
             to_phase=self.current_phase.value,
             reason=transition.reason,
         )
+        
+        # Telemetry: Phase transition
+        emit_telemetry(
+            request_id=self.task.id,
+            layer=6,
+            layer_name="Agent Thread",
+            component="AgentThread",
+            operation="phase_transition",
+            status="progress",
+            message=f"Phase transition: {old_phase.value} -> {self.current_phase.value}",
+            session_id=self.task.session_id,
+            phase=self.current_phase.value,
+            step=self.step_count,
+            total_steps=self.max_steps,
+            details={
+                "from_phase": old_phase.value,
+                "to_phase": self.current_phase.value,
+                "reason": transition.reason,
+            },
+        )
     
     async def _handle_final_answer(self, parsed: Any) -> AgentOutput:
         """Handle final answer."""
+        import time
         answer = parsed.final_answer or parsed.raw_content
         
         self.logger.info(
             "Task completed",
             success=True,
             steps=self.step_count,
+        )
+        
+        # Telemetry: Execution completed
+        emit_telemetry(
+            request_id=self.task.id,
+            layer=6,
+            layer_name="Agent Thread",
+            component="AgentThread",
+            operation="execution",
+            status="complete",
+            message="Task completed successfully",
+            session_id=self.task.session_id,
+            phase=self.current_phase.value,
+            step=self.step_count,
+            total_steps=self.max_steps,
         )
         
         return AgentOutput(

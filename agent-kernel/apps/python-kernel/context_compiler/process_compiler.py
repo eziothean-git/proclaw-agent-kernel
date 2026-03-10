@@ -24,6 +24,10 @@ class ProcessContextCompiler:
     """
     Compiles task-specific execution contexts using an intelligent Agent.
     
+    For simple tasks (conversation, direct response), returns lightweight context
+    without starting an Agent. Only complex tasks (file operations, etc.) trigger
+    the Agent-based exploration.
+    
     This compiler creates a ProcessContextCompilerAgent that actively explores
     Runtime Memory to gather and compile the most relevant context for task
     execution. The agent can:
@@ -51,10 +55,10 @@ class ProcessContextCompiler:
         task_snapshots: list[TaskSnapshot] | None = None
     ) -> CompiledContext:
         """
-        Compile context package for a specific task using ProcessContextCompilerAgent.
+        Compile context package for a specific task.
         
-        Creates and runs a compiler agent that actively explores Runtime Memory
-        to gather the most relevant context for the target task.
+        For simple tasks (conversation, no capabilities), returns lightweight context
+        immediately without Agent exploration. Complex tasks use Agent-based compilation.
         
         Args:
             task_id: Unique task identifier
@@ -66,10 +70,44 @@ class ProcessContextCompiler:
         Returns:
             CompiledContext with gathered execution context
         """
+        process_name = process_definition.get("name", "unnamed")
+        capabilities = process_definition.get("capabilities", [])
+        goal = process_definition.get("goal", "")
+        
+        # FAST PATH: Simple conversation/response tasks don't need Agent exploration
+        if not capabilities and ("respond" in process_name or "conversation" in process_name or "greeting" in goal.lower()):
+            self.logger.info(
+                "Fast path for simple task - no Agent needed",
+                task_id=task_id,
+                process_name=process_name,
+                reason="simple_conversation_no_capabilities"
+            )
+            
+            return CompiledContext(
+                task_id=task_id,
+                system_message="You are a helpful AI assistant. Respond directly to the user.",
+                working_context={
+                    "task_type": "conversation",
+                    "goal": goal,
+                    "requires_exploration": False,
+                },
+                tools_available=[],
+                artifacts=[],
+                memory_references=[],
+                metadata={
+                    "compiled_at": asyncio.get_event_loop().time(),
+                    "compilation_steps": 0,
+                    "artifacts_gathered": 0,
+                    "fast_path": True,
+                }
+            )
+        
+        # SLOW PATH: Complex tasks need Agent exploration
         self.logger.info(
             "Compiling process context via Agent",
             task_id=task_id,
-            process_name=process_definition.get("name", "unnamed"),
+            process_name=process_name,
+            capabilities=capabilities,
         )
         
         # Create compiler agent
