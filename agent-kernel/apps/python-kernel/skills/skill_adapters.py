@@ -1,14 +1,11 @@
 """
 Skill Adapters - Adapt MCP-style skills for LocalSkillRegistry
 """
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from skills.fs_skill import FileSystemSkill
 from skills.shell_skill import ShellSkill
 from scheduled_dispatcher.skill import ScheduledRequestSkill
-
-if TYPE_CHECKING:
-    from context_compiler.compiler_skill import ContextCompilerSkill
 
 
 class FileSystemSkillAdapter:
@@ -35,19 +32,24 @@ class FileSystemSkillAdapter:
 
 class ShellSkillAdapter:
     """Adapter to make ShellSkill work with LocalSkillRegistry"""
-    
+
     def __init__(self):
         self.skill = ShellSkill()
-    
-    async def execute(self, command: str, timeout: int = 30):
-        """Execute shell command"""
-        result = await self.skill._execute_command(command, timeout)
-        return {
-            "success": result[0].text.startswith("Exit code: 0") if result else False,
-            "result": result[0].text if result else "",
-            "error": None
-        }
 
+    async def execute(self, command: str, timeout: int = 30, working_dir: str | None = None):
+        """Execute shell command"""
+        result = await self.skill._execute_command(command, timeout, working_dir)
+        text = result[0].text if result else ""
+        last_line = text.strip().rsplit("\n", 1)[-1].strip() if text.strip() else ""
+        if not last_line.startswith("Exit code:"):
+            # Unexpected output format from shell_skill; treat as error
+            return {"success": False, "result": text, "error": "Unexpected shell output format"}
+        success = last_line == "Exit code: 0"
+        return {
+            "success": success,
+            "result": text,
+            "error": None,
+        }
 
 class ScheduledRequestSkillAdapter:
     """Adapter to make ScheduledRequestSkill work with LocalSkillRegistry"""

@@ -6,7 +6,9 @@ This allows direct skill invocation without HTTP overhead.
 
 Features directory-level locking for cross-agent safety.
 """
-from typing import Any, Callable
+import asyncio
+import re
+from typing import Any
 from pathlib import Path
 import structlog
 
@@ -167,7 +169,9 @@ class LocalSkillRegistry:
                     # Failed to acquire lock, release any acquired locks
                     for acquired in acquired_paths[:]:
                         try:
-                            await self._lock_manager.release_lock(acquired, task_id, session_id or "unknown")
+                            await self._lock_manager.release_lock(
+                                acquired, task_id, session_id or "unknown"
+                            )
                         except Exception:
                             pass  # Ignore release errors during cleanup
                         acquired_paths.remove(acquired)
@@ -225,7 +229,9 @@ class LocalSkillRegistry:
                 "error": f"Execution failed: {str(e)}",
             }
     
-    def _extract_paths(self, skill_name: str, tool_name: str, parameters: dict[str, Any]) -> list[str]:
+    def _extract_paths(
+        self, skill_name: str, tool_name: str, parameters: dict[str, Any]
+    ) -> list[str]:
         """
         Extract directory paths that need to be locked from skill parameters.
         
@@ -266,7 +272,6 @@ class LocalSkillRegistry:
             if "command" in parameters:
                 command = parameters["command"]
                 # Extract potential paths from command (simplified)
-                import re
                 path_patterns = [
                     r'cd\s+(["\']?[^;|&<>"\']+["\']?)',
                     r'--directory[=\s]+(["\']?[^;|&<>"\']+["\']?)',
@@ -384,7 +389,3 @@ def register_skill(
     """Convenience function to register a skill."""
     registry = get_local_skill_registry()
     registry.register(skill_name, skill_instance, tool_schemas)
-
-
-# Import asyncio for type checking
-import asyncio

@@ -1,6 +1,7 @@
 """
 File System Skill - MCP server for file system operations.
 """
+import asyncio
 import os
 import structlog
 from pathlib import Path
@@ -163,7 +164,6 @@ class FileSystemSkill:
 
 async def main():
     """Run the file system skill MCP server."""
-    import asyncio
     from mcp.server.stdio import stdio_server
     
     skill = FileSystemSkill()
