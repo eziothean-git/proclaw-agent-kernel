@@ -1,0 +1,114 @@
+# ProClaw BlockComposer Configuration
+# Place this file at /etc/proclaw/composer.yaml
+
+server:
+  # gRPC socket path
+  socket_path: "/run/proclaw/composer.sock"
+  
+  # Number of worker threads
+  workers: 4
+  
+  # Maximum concurrent requests
+  max_concurrent_requests: 100
+  
+  # Request timeout in seconds
+  request_timeout_seconds: 30
+
+cache:
+  # L1: In-memory cache
+  l1:
+    max_entries: 1000
+    default_ttl_seconds:
+      prime: 300      # 5 minutes
+      session: 120    # 2 minutes  
+      task: 30        # 30 seconds
+  
+  # L2: File system cache (no TTL, long-term storage)
+  l2:
+    path: "/var/lib/proclaw/cache"
+    max_size_mb: 512
+    compression: "zstd"
+
+bash_wrapper:
+  # Execution modes and allowed commands
+  modes:
+    file:
+      allowed_commands: ["cat", "ls", "find", "pwd", "readlink", "realpath"]
+      timeout_seconds: 10
+      max_output_size: 100000  # 100KB
+      
+    search:
+      allowed_commands: ["rg", "ast-grep", "grep", "find", "ack", "ag"]
+      timeout_seconds: 30
+      max_output_size: 500000  # 500KB
+      max_results: 1000
+      
+    system:
+      allowed_commands: ["ps", "df", "du", "uptime", "uname", "whoami", "hostname"]
+      timeout_seconds: 5
+      max_output_size: 10000   # 10KB
+  
+  # Globally blocked commands (security)
+  blocked_commands:
+    - "rm -rf /"
+    - "mkfs"
+    - "dd if=/dev/zero"
+    - ":(){ :|:& };:"  # fork bomb
+    - "> /dev/sda"
+
+memory:
+  # Long-term memory storage
+  database_path: "/var/lib/proclaw/memory.db"
+  max_facts_per_query: 50
+  default_categories:
+    - "general"
+    - "project"
+    - "preference"
+
+permissions:
+  # Default token TTL in seconds
+  default_token_ttl_seconds: 3600  # 1 hour
+  
+  # Default max calls per token
+  default_max_calls: 100
+  
+  # Policy rules file
+  policy_file: "/etc/proclaw/policies.yaml"
+
+observability:
+  # Prometheus metrics
+  metrics:
+    enabled: true
+    port: 9090
+    path: "/metrics"
+  
+  # Trace collection (file system based)
+  traces:
+    base_path: "/var/lib/proclaw/traces"
+    # Fields to record in traces (extensible)
+    enabled_fields:
+      - "timestamp"
+      - "trace_id"
+      - "session_id"
+      - "thread_id"
+      - "operation"
+      - "mode"
+      - "command"
+      - "working_directory"
+      - "duration_ms"
+      - "success"
+      - "cache_hit"
+      - "output_size_bytes"
+    # Keep thread history for God-view
+    keep_thread_history: true
+  
+  # Audit logging
+  audit:
+    path: "/var/log/proclaw/audit.log"
+    level: "info"  # debug, info, warn, error
+  
+  # Application logging
+  logging:
+    level: "info"
+    format: "json"   # json, text
+    output: "stdout" # stdout, file

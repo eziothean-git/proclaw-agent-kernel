@@ -1,0 +1,265 @@
+syntax = "proto3";
+
+package proclaw.block_composer.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/proclaw/proclaw/kernel-v2/proto";
+
+// BlockComposer service definition
+service BlockComposer {
+  // ==================== Core Functions ====================
+  
+  // Compose blocks into final context
+  rpc Compose(ComposeRequest) returns (ComposeResponse);
+  
+  // Query blocks (for Session Host)
+  rpc QueryBlocks(QueryBlocksRequest) returns (QueryBlocksResponse);
+  
+  // Execute authorized bash command (for Thread)
+  rpc ExecuteBash(ExecuteBashRequest) returns (ExecuteBashResponse);
+  
+  // ==================== Permission Management ====================
+  
+  // Validate capability token
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+  
+  // Revoke token
+  rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
+  
+  // ==================== Observability ====================
+  
+  // Get composition trace
+  rpc GetTrace(GetTraceRequest) returns (TraceResponse);
+  
+  // List traces (with filtering)
+  rpc ListTraces(ListTracesRequest) returns (ListTracesResponse);
+  
+  // Replay trace
+  rpc ReplayTrace(ReplayTraceRequest) returns (ReplayTraceResponse);
+  
+  // Get metrics
+  rpc GetMetrics(GetMetricsRequest) returns (MetricsResponse);
+  
+  // Subscribe to real-time traces (for debugging)
+  rpc SubscribeTraces(SubscribeTracesRequest) returns (stream TraceEvent);
+}
+
+// ==================== Block Types ====================
+
+enum BlockType {
+  BLOCK_TYPE_UNSPECIFIED = 0;
+  SYSTEM_IDENTITY = 1;
+  GLOBAL_MEMORY = 2;
+  INTENT_ANALYSIS = 3;
+  SESSION_CONTEXT = 4;
+  ACTIVE_TASKS = 5;
+  CONVERSATION_HISTORY = 6;
+  TASK_GOAL = 7;
+  WORKING_MEMORY = 8;
+  AVAILABLE_TOOLS = 9;
+  RECENT_OBSERVATIONS = 10;
+  FILE_CONTENT = 11;
+  CODE_SEARCH_RESULT = 12;
+  SYMBOL_DEFINITION = 13;
+  BASH_OUTPUT = 14;
+  LONG_TERM_MEMORY = 15;
+}
+
+// Composition profile
+enum Profile {
+  PROFILE_UNSPECIFIED = 0;
+  PRIME = 1;
+  SESSION = 2;
+  TASK = 3;
+}
+
+// ==================== Block Structure ====================
+
+message Block {
+  string block_id = 1;
+  BlockType block_type = 2;
+  string content = 3;
+  bytes metadata = 4;  // JSON encoded metadata
+  uint32 priority = 5;
+  uint32 token_count = 6;
+  repeated string dependencies = 7;
+  string content_hash = 8;
+  google.protobuf.Timestamp created_at = 9;
+}
+
+// ==================== Compose ====================
+
+message ComposeRequest {
+  string session_id = 1;
+  string task_id = 2;
+  Profile profile = 3;
+  repeated BlockType block_types = 4;
+  map<string, string> context = 5;
+  string capability_token = 6;
+}
+
+message ComposeResponse {
+  string composed_text = 1;
+  repeated string block_ids_used = 2;
+  uint32 total_tokens = 3;
+  bool cache_hit = 4;
+  string trace_id = 5;
+  google.protobuf.Duration latency = 6;
+}
+
+// ==================== Query Blocks ====================
+
+message QueryBlocksRequest {
+  string session_id = 1;
+  repeated BlockQuery queries = 2;
+  
+  message BlockQuery {
+    BlockType block_type = 1;
+    map<string, string> parameters = 2;
+  }
+}
+
+message QueryBlocksResponse {
+  repeated Block blocks = 1;
+  bool partial = 2;
+  repeated string errors = 3;
+}
+
+// ==================== Bash Execution ====================
+
+message ExecuteBashRequest {
+  string session_id = 1;
+  string command = 2;
+  string capability_token = 3;
+  int32 timeout_seconds = 4;
+  string working_directory = 5;
+}
+
+message ExecuteBashResponse {
+  bool success = 1;
+  string stdout = 2;
+  string stderr = 3;
+  int32 exit_code = 4;
+  int64 execution_time_ms = 5;
+  string error_message = 6;
+  uint32 remaining_calls = 7;
+}
+
+// ==================== Token Validation ====================
+
+message ValidateTokenRequest {
+  string token = 1;
+}
+
+message ValidateTokenResponse {
+  bool valid = 1;
+  string subject = 2;
+  string level = 3;
+  repeated string scopes = 4;
+  uint32 remaining_calls = 5;
+  google.protobuf.Timestamp expires_at = 6;
+}
+
+message RevokeTokenRequest {
+  string token = 1;
+  string reason = 2;
+}
+
+message RevokeTokenResponse {
+  bool success = 1;
+}
+
+// ==================== Trace ====================
+
+message GetTraceRequest {
+  string trace_id = 1;
+  bool include_events = 2;
+}
+
+message TraceResponse {
+  Trace trace = 1;
+}
+
+message Trace {
+  string trace_id = 1;
+  google.protobuf.Timestamp started_at = 2;
+  google.protobuf.Duration duration = 3;
+  string session_id = 4;
+  string task_id = 5;
+  Profile profile = 6;
+  repeated TraceEvent events = 7;
+  ComposeResponse result = 8;
+}
+
+message TraceEvent {
+  google.protobuf.Timestamp timestamp = 1;
+  string event_type = 2;
+  map<string, string> attributes = 3;
+  int64 duration_ms = 4;
+}
+
+message ListTracesRequest {
+  string session_id = 1;
+  google.protobuf.Timestamp start_time = 2;
+  google.protobuf.Timestamp end_time = 3;
+  int32 limit = 4;
+}
+
+message ListTracesResponse {
+  repeated TraceSummary traces = 1;
+}
+
+message TraceSummary {
+  string trace_id = 1;
+  google.protobuf.Timestamp started_at = 2;
+  google.protobuf.Duration duration = 3;
+  string session_id = 4;
+  bool cache_hit = 5;
+  uint32 block_count = 6;
+  uint32 token_count = 7;
+}
+
+message ReplayTraceRequest {
+  string trace_id = 1;
+  bool compare_results = 2;
+}
+
+message ReplayTraceResponse {
+  bool success = 1;
+  Trace original = 2;
+  Trace replayed = 3;
+  repeated Diff diffs = 4;
+}
+
+message Diff {
+  string field = 1;
+  string original = 2;
+  string replayed = 3;
+}
+
+// ==================== Metrics ====================
+
+message GetMetricsRequest {
+  bool include_histograms = 1;
+}
+
+message MetricsResponse {
+  map<string, double> counters = 1;
+  map<string, double> gauges = 2;
+  map<string, Histogram> histograms = 3;
+}
+
+message Histogram {
+  repeated double buckets = 1;
+  repeated uint64 counts = 2;
+  double sum = 3;
+  uint64 count = 4;
+}
+
+// ==================== Subscribe ====================
+
+message SubscribeTracesRequest {
+  string session_id = 1;
+}

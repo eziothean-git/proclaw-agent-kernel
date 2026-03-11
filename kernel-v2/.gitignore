@@ -1,0 +1,41 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Generated protobuf code
+/src/proclaw.block_composer.v1.rs
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+
+# Test artifacts
+/tmp/
+*.log
+
+# Build artifacts
+*.rlib
+*.rmeta
+*.d
+
+# Coverage
+coverage/
+*.profraw
+*.profdata
+
+# Documentation
+docs/_build/
+/target-doc/
+
+# OS files
+.DS_Store
+Thumbs.db

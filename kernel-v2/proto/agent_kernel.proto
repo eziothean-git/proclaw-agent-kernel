@@ -1,0 +1,305 @@
+syntax = "proto3";
+
+package proclaw.agent.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/empty.proto";
+
+option go_package = "github.com/proclaw/proclaw/kernel-v2/proto";
+
+// ==================== Agent Kernel Service ====================
+// 
+// Agent Kernel 是完整的 Agent 执行引擎，替代原有的 Python Kernel
+// 提供：
+// - Thread 生命周期管理（创建、执行、暂停、恢复、终止）
+// - 执行协调（目录锁定、Skill 路由）
+// - 上下文编译（复用 BlockComposer）
+// - LLM 调用
+
+service AgentKernel {
+    // ==================== Thread 管理 ====================
+    
+    // 创建新的 Thread
+    rpc CreateThread(CreateThreadRequest) returns (CreateThreadResponse);
+    
+    // 启动 Thread Executor（开始执行）
+    rpc SpawnExecutor(SpawnExecutorRequest) returns (SpawnExecutorResponse);
+    
+    // 控制 Executor（暂停/恢复/取消）
+    rpc ControlExecutor(ControlExecutorRequest) returns (ControlExecutorResponse);
+    
+    // 终止 Executor（保留 Thread）
+    rpc KillExecutor(KillExecutorRequest) returns (KillExecutorResponse);
+    
+    // 流式获取 Executor 事件
+    rpc StreamExecutorEvents(StreamExecutorEventsRequest) returns (stream ExecutorEvent);
+    
+    // 查询 Thread 历史
+    rpc GetThreadHistory(GetThreadHistoryRequest) returns (GetThreadHistoryResponse);
+    
+    // 获取 Thread 状态
+    rpc GetThreadStatus(GetThreadStatusRequest) returns (GetThreadStatusResponse);
+    
+    // ==================== 执行协调 ====================
+    
+    // 执行 Skill（由 Thread Executor 调用）
+    rpc ExecuteSkill(ExecuteSkillRequest) returns (ExecuteSkillResponse);
+    
+    // 获取资源锁定状态
+    rpc GetResourceStatus(GetResourceStatusRequest) returns (GetResourceStatusResponse);
+    
+    // 查询 Ticket 状态
+    rpc GetTicketStatus(GetTicketStatusRequest) returns (GetTicketStatusResponse);
+    
+    // ==================== 系统管理 ====================
+    
+    // 健康检查
+    rpc HealthCheck(google.protobuf.Empty) returns (HealthCheckResponse);
+    
+    // 获取系统状态
+    rpc GetSystemStatus(google.protobuf.Empty) returns (SystemStatusResponse);
+    
+    // 优雅关闭
+    rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+// ==================== Thread 管理消息 ====================
+
+message CreateThreadRequest {
+    string session_id = 1;
+    string task_goal = 2;
+    repeated string constraints = 3;
+    repeated string allowed_capabilities = 4;
+    map<string, string> session_context = 5;
+}
+
+message CreateThreadResponse {
+    string thread_id = 2;
+    bool success = 3;
+    string error_message = 4;
+}
+
+message SpawnExecutorRequest {
+    string thread_id = 1;
+    int32 max_steps = 2;  // 默认 100
+    string initial_phase = 3;  // "explore", "execute", "complete"
+}
+
+message SpawnExecutorResponse {
+    string executor_id = 1;
+    bool success = 2;
+    string error_message = 3;
+}
+
+message ControlExecutorRequest {
+    string executor_id = 1;
+    ControlAction action = 2;  // PAUSE, RESUME, CANCEL
+    
+    enum ControlAction {
+        CONTROL_PAUSE = 0;
+        CONTROL_RESUME = 1;
+        CONTROL_CANCEL = 2;
+    }
+}
+
+message ControlExecutorResponse {
+    bool success = 1;
+    string error_message = 2;
+    ExecutorStatus new_status = 3;
+}
+
+message KillExecutorRequest {
+    string executor_id = 1;
+    bool wait_for_cleanup = 2;  // 是否等待清理完成
+}
+
+message KillExecutorResponse {
+    bool success = 1;
+    string thread_id = 2;  // Thread 保留，可以重新启动
+}
+
+message StreamExecutorEventsRequest {
+    string executor_id = 1;
+}
+
+message ExecutorEvent {
+    google.protobuf.Timestamp timestamp = 1;
+    EventType event_type = 2;
+    string executor_id = 3;
+    string thread_id = 4;
+    int32 step_number = 5;
+    string message = 6;
+    map<string, string> payload = 7;
+    
+    enum EventType {
+        STEP_STARTED = 0;
+        CONTEXT_BUILT = 1;
+        LLM_REQUESTED = 2;
+        LLM_RESPONDED = 3;
+        INTENT_PARSED = 4;
+        SKILL_EXECUTING = 5;
+        SKILL_COMPLETED = 6;
+        STEP_COMPLETED = 7;
+        PHASE_CHANGED = 8;
+        EVENT_COMPLETED = 9;
+        EVENT_ERROR = 10;
+    }
+}
+
+message GetThreadHistoryRequest {
+    string thread_id = 1;
+    int32 limit = 2;  // 最近 N 条事件
+    bool include_events = 3;
+    bool include_artifacts = 4;
+}
+
+message GetThreadHistoryResponse {
+    string thread_id = 1;
+    ThreadMeta meta = 2;
+    repeated Event events = 3;
+    repeated Artifact artifacts = 4;
+}
+
+message GetThreadStatusRequest {
+    string thread_id = 1;
+}
+
+message GetThreadStatusResponse {
+    string thread_id = 1;
+    ThreadStatus status = 2;
+    string current_phase = 3;
+    int32 step_count = 4;
+    bool has_active_executor = 5;
+    string active_executor_id = 6;
+}
+
+// ==================== 执行协调消息 ====================
+
+message ExecuteSkillRequest {
+    string request_id = 1;
+    string skill_name = 2;
+    string tool_name = 3;
+    string parameters_json = 4;  // JSON 字符串
+    SkillContext context = 5;
+}
+
+message ExecuteSkillResponse {
+    string request_id = 1;
+    bool success = 2;
+    string result_json = 3;  // JSON 字符串
+    string error_message = 4;
+    int64 execution_time_ms = 5;
+}
+
+message SkillContext {
+    string thread_id = 1;
+    string session_id = 2;
+    string executor_id = 3;
+    repeated string working_dirs = 4;
+}
+
+message GetResourceStatusRequest {
+    repeated string directory_paths = 1;
+}
+
+message GetResourceStatusResponse {
+    repeated DirectoryLockStatus locks = 1;
+    
+    message DirectoryLockStatus {
+        string directory_path = 1;
+        bool is_locked = 2;
+        string holder_executor_id = 3;
+        int32 queue_length = 4;
+    }
+}
+
+message GetTicketStatusRequest {
+    string ticket_id = 1;
+}
+
+message GetTicketStatusResponse {
+    string ticket_id = 1;
+    TicketStatus status = 2;
+    string skill_name = 3;
+    string error_message = 4;
+    
+    enum TicketStatus {
+        TICKET_PENDING = 0;
+        TICKET_RUNNING = 1;
+        TICKET_COMPLETED = 2;
+        TICKET_FAILED = 3;
+        TICKET_CANCELLED = 4;
+    }
+}
+
+// ==================== 系统管理消息 ====================
+
+message HealthCheckResponse {
+    bool healthy = 1;
+    string version = 2;
+    int64 uptime_seconds = 3;
+}
+
+message SystemStatusResponse {
+    int32 active_threads = 1;
+    int32 active_executors = 2;
+    int32 pending_tickets = 3;
+    int64 total_executions = 4;
+    int64 total_wait_time_ms = 5;
+    map<string, int32> skill_stats = 6;
+}
+
+message ShutdownRequest {
+    int32 timeout_seconds = 1;  // 默认 10 秒
+}
+
+message ShutdownResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+// ==================== 数据类型 ====================
+
+message ThreadMeta {
+    string thread_id = 1;
+    string session_id = 2;
+    google.protobuf.Timestamp created_at = 3;
+    google.protobuf.Timestamp updated_at = 4;
+    string current_phase = 5;
+    int32 step_count = 6;
+    ThreadStatus status = 7;
+}
+
+enum ThreadStatus {
+    CREATED = 0;
+    ACTIVE = 1;
+    PAUSED = 2;
+    COMPLETED = 3;
+    ERROR = 4;
+}
+
+enum ExecutorStatus {
+    EXECUTOR_INITIALIZING = 0;
+    EXECUTOR_RUNNING = 1;
+    EXECUTOR_PAUSED = 2;
+    EXECUTOR_COMPLETED = 3;
+    EXECUTOR_ERROR = 4;
+}
+
+message Event {
+    string event_id = 1;
+    google.protobuf.Timestamp timestamp = 2;
+    string event_type = 3;
+    int32 step_number = 4;
+    string phase = 5;
+    string content_json = 6;  // JSON 字符串
+}
+
+message Artifact {
+    string slot_id = 1;
+    string artifact_type = 2;
+    string content_json = 3;  // JSON 字符串
+    int32 priority = 4;
+    google.protobuf.Timestamp created_at = 5;
+}

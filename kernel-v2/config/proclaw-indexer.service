@@ -1,0 +1,20 @@
+[Unit]
+Description=ProClaw Code Indexer - Background code indexing service
+After=proclaw-composer.service
+
+[Service]
+Type=simple
+User=proclaw
+Group=proclaw
+ExecStart=/usr/local/bin/proclaw-indexer --config /etc/proclaw/indexer.yaml
+
+# Resource limits (lower priority)
+CPUQuota=50%
+MemoryMax=512M
+Nice=10
+
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

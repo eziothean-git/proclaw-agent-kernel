@@ -7,11 +7,12 @@ import { SseController } from './sse.controller';
 import { RouterModule } from '../router/router.module';
 import { CoreModule } from '../core/core.module';
 import { KernelModule } from '../kernel/kernel.module';
+import { TelemetryModule } from '../telemetry/telemetry.module';
 import { RequestManagerClient } from '../grpc/request-manager.client';
 import { RawRequestStorageService } from '../raw-request/raw-request-storage.service';
 
 @Module({
-  imports: [CoreModule, RouterModule, KernelModule, HttpModule],
+  imports: [CoreModule, RouterModule, KernelModule, HttpModule, TelemetryModule],
   controllers: [GatewayController, WebhookController, SseController],
   providers: [GatewayService, RequestManagerClient, RawRequestStorageService],
   exports: [GatewayService, RequestManagerClient, RawRequestStorageService],

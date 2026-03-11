@@ -14,6 +14,7 @@ import structlog
 from executors_client.coordinator_interface import get_execution_coordinator
 from schemas.models import CompiledContext, TaskSnapshot, TaskStatus
 from storage.runtime_store import get_memory_manager
+from telemetry import emit_telemetry
 from thread_runtime.agent_thread import AgentThread
 from thread_runtime.models import Phase
 from thread_runtime.working_set_builder import WorkingSetBuilder
@@ -106,6 +107,22 @@ class AgentScheduler:
             },
         )
 
+        # Telemetry: Thread lifecycle start
+        emit_telemetry(
+            request_id=task.id,
+            layer=6,
+            layer_name="Scheduler",
+            component="AgentScheduler",
+            operation="thread_lifecycle",
+            status="start",
+            message="Agent thread created and starting",
+            session_id=task.session_id,
+            metrics={
+                "concurrent_slots_used": len(self.active_tasks),
+                "concurrent_slots_total": self.max_concurrent_tasks,
+            },
+        )
+
         # Create Agent Thread with new architecture
         agent_thread = AgentThread(
             task=task,
@@ -162,6 +179,22 @@ class AgentScheduler:
                 },
             )
             
+            # Telemetry: Thread lifecycle complete
+            emit_telemetry(
+                request_id=task.id,
+                layer=6,
+                layer_name="Scheduler",
+                component="AgentScheduler",
+                operation="thread_lifecycle",
+                status="complete" if result.success else "error",
+                message=f"Agent thread completed with status: {task.status.value}",
+                session_id=task.session_id,
+                metrics={
+                    "concurrent_slots_used": len(self.active_tasks) - 1,  # -1 because we're about to remove this task
+                    "concurrent_slots_total": self.max_concurrent_tasks,
+                },
+            )
+            
             return {
                 "task_id": task.id,
                 "status": task.status.value,
@@ -174,6 +207,19 @@ class AgentScheduler:
             task.status = TaskStatus.PAUSED
             task.error = "Task cancelled"
             await memory_manager.save_task(task)
+            
+            # Telemetry: Thread paused
+            emit_telemetry(
+                request_id=task.id,
+                layer=6,
+                layer_name="Scheduler",
+                component="AgentScheduler",
+                operation="thread_paused",
+                status="progress",
+                message="Agent thread paused (cancelled)",
+                session_id=task.session_id,
+            )
+            
             raise
             
         finally:
@@ -215,6 +261,19 @@ class AgentScheduler:
         
         await agent_thread.pause(reason)
         self.logger.info("Task paused", task_id=task_id, reason=reason)
+        
+        # Telemetry: Thread paused
+        emit_telemetry(
+            request_id=task_id,
+            layer=6,
+            layer_name="Scheduler",
+            component="AgentScheduler",
+            operation="thread_paused",
+            status="progress",
+            message=f"Task paused: {reason}",
+            session_id=agent_thread.task.session_id if agent_thread else None,
+        )
+        
         return True
 
     async def resume_task(self, task_id: str) -> bool:
@@ -234,6 +293,19 @@ class AgentScheduler:
         
         await agent_thread.resume()
         self.logger.info("Task resumed", task_id=task_id)
+        
+        # Telemetry: Thread resumed
+        emit_telemetry(
+            request_id=task_id,
+            layer=6,
+            layer_name="Scheduler",
+            component="AgentScheduler",
+            operation="thread_resumed",
+            status="progress",
+            message="Task resumed",
+            session_id=agent_thread.task.session_id if agent_thread else None,
+        )
+        
         return True
 
     async def get_thread_log(self, task_id: str) -> dict[str, Any] | None:

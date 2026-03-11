@@ -219,7 +219,7 @@ success: true | false
         
         # Telemetry: Thread execution started
         emit_telemetry(
-            request_id=self.task.id,
+            request_id=self.compiled_context.session_context.get("request_id") if self.compiled_context.session_context else self.task.id,
             layer=6,
             layer_name="Agent Thread",
             component="AgentThread",
@@ -242,9 +242,12 @@ success: true | false
                 
                 self.step_count += 1
                 
-                # Telemetry: Step started
+                # SEE: Build working set
+                working_set = self._build_working_set()
+                
+                # Telemetry: Step started with saw (what Agent sees)
                 emit_telemetry(
-                    request_id=self.task.id,
+                    request_id=self.compiled_context.session_context.get("request_id") if self.compiled_context.session_context else self.task.id,
                     layer=6,
                     layer_name="Agent Thread",
                     component="AgentThread",
@@ -256,16 +259,45 @@ success: true | false
                     step=self.step_count,
                     total_steps=self.max_steps,
                     progress_pct=int((self.step_count / self.max_steps) * 100),
+                    payload={
+                        "saw": {
+                            "working_set_summary": f"Built working set with {len(working_set.messages)} messages" if hasattr(working_set, 'messages') else "Working set built",
+                            "context_size": len(str(working_set)),
+                            "key_points": working_set.key_points[:5] if hasattr(working_set, 'key_points') else [],
+                        }
+                    },
                 )
-                
-                # SEE: Build working set
-                working_set = self._build_working_set()
                 
                 # ACT: Generate action
                 raw_output = await self._generate_action(working_set)
                 
                 # Parse output
                 parsed = self.parser.parse(raw_output, self.current_phase)
+                
+                # Telemetry: Thought (what Agent thinks and writes)
+                emit_telemetry(
+                    request_id=self.compiled_context.session_context.get("request_id") if self.compiled_context.session_context else self.task.id,
+                    layer=6,
+                    layer_name="Agent Thread",
+                    component="AgentThread",
+                    operation="thought",
+                    status="progress",
+                    message=f"Generated {parsed.intent_type.value} action",
+                    session_id=self.task.session_id,
+                    phase=self.current_phase.value,
+                    step=self.step_count,
+                    payload={
+                        "thought": {
+                            "reasoning": parsed.reasoning if hasattr(parsed, 'reasoning') and parsed.reasoning else f"Generated {parsed.intent_type.value} intent",
+                            "plan": parsed.plan if hasattr(parsed, 'plan') and parsed.plan else [],
+                            "confidence": parsed.confidence if hasattr(parsed, 'confidence') else None,
+                        },
+                        "wrote": {
+                            "output_type": parsed.intent_type.value,
+                            "content": parsed.raw_content[:500] if hasattr(parsed, 'raw_content') and parsed.raw_content else "",
+                        }
+                    },
+                )
                 
                 # Handle different intents
                 if parsed.intent_type == IntentType.FINAL_ANSWER:
@@ -295,7 +327,7 @@ success: true | false
             
             # Telemetry: Max steps reached
             emit_telemetry(
-                request_id=self.task.id,
+                request_id=self.compiled_context.session_context.get("request_id") if self.compiled_context.session_context else self.task.id,
                 layer=6,
                 layer_name="Agent Thread",
                 component="AgentThread",
@@ -322,7 +354,7 @@ success: true | false
             
             # Telemetry: Execution failed
             emit_telemetry(
-                request_id=self.task.id,
+                request_id=self.compiled_context.session_context.get("request_id") if self.compiled_context.session_context else self.task.id,
                 layer=6,
                 layer_name="Agent Thread",
                 component="AgentThread",
@@ -392,7 +424,7 @@ success: true | false
             
             # Telemetry: Tool call
             emit_telemetry(
-                request_id=self.task.id,
+                request_id=self.compiled_context.session_context.get("request_id") if self.compiled_context.session_context else self.task.id,
                 layer=6,
                 layer_name="Agent Thread",
                 component="AgentThread",
@@ -444,7 +476,7 @@ success: true | false
             
             # Telemetry: Tool result
             emit_telemetry(
-                request_id=self.task.id,
+                request_id=self.compiled_context.session_context.get("request_id") if self.compiled_context.session_context else self.task.id,
                 layer=6,
                 layer_name="Agent Thread",
                 component="AgentThread",
@@ -502,7 +534,7 @@ success: true | false
         
         # Telemetry: Phase transition
         emit_telemetry(
-            request_id=self.task.id,
+            request_id=self.compiled_context.session_context.get("request_id") if self.compiled_context.session_context else self.task.id,
             layer=6,
             layer_name="Agent Thread",
             component="AgentThread",
@@ -533,7 +565,7 @@ success: true | false
         
         # Telemetry: Execution completed
         emit_telemetry(
-            request_id=self.task.id,
+            request_id=self.compiled_context.session_context.get("request_id") if self.compiled_context.session_context else self.task.id,
             layer=6,
             layer_name="Agent Thread",
             component="AgentThread",

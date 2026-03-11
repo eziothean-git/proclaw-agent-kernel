@@ -1,20 +1,29 @@
 """
-Telemetry Manager - SSE-based telemetry streaming for TUI.
+Telemetry Emitter - HTTP-based telemetry streaming to Gateway.
+
+重构说明:
+- 从 SSE Server 改为 HTTP Client
+- 支持批量发送，减少 HTTP 开销
+- 本地缓冲防止网络故障时丢数据
+- 保留 emit_telemetry() API 向后兼容
 """
 import asyncio
 import json
+import os
 import time
 from collections import deque
 from datetime import datetime
-from typing import Any, AsyncIterator, Optional
+from typing import Any, Optional
+from urllib.parse import urljoin
 
+import aiohttp
 import structlog
 
 logger = structlog.get_logger()
 
 
 class TelemetryEvent:
-    """Standard telemetry event structure matching TUI expectations."""
+    """遥测事件结构"""
     
     def __init__(
         self,
@@ -23,18 +32,23 @@ class TelemetryEvent:
         layer_name: str,
         component: str,
         operation: str,
-        status: str,  # "start", "progress", "complete", "error"
-        message: str,
+        status: str,
+        message: str = "",
         session_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
+        level: str = "standard",
         progress_pct: Optional[int] = None,
         step: Optional[int] = None,
         total_steps: Optional[int] = None,
         phase: Optional[str] = None,
+        payload: Optional[dict] = None,
+        metrics: Optional[dict] = None,
+        sub_threads: Optional[list] = None,
         details: Optional[dict] = None,
         elapsed_ms: Optional[int] = None,
-        estimated_ms: Optional[int] = None,
     ):
-        self.timestamp = datetime.utcnow()
+        self.timestamp = datetime.utcnow().isoformat()
+        self.trace_id = trace_id or request_id
         self.request_id = request_id
         self.session_id = session_id
         self.layer = layer
@@ -43,18 +57,22 @@ class TelemetryEvent:
         self.operation = operation
         self.status = status
         self.message = message
+        self.level = level
         self.progress_pct = progress_pct
         self.step = step
         self.total_steps = total_steps
         self.phase = phase
-        self.details = details or {}
+        self.payload = payload or {}
+        self.metrics = metrics or {}
+        self.sub_threads = sub_threads or []
+        self.details = details
         self.elapsed_ms = elapsed_ms
-        self.estimated_ms = estimated_ms
     
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "timestamp": self.timestamp.isoformat(),
+        """转换为字典"""
+        result = {
+            "timestamp": self.timestamp,
+            "trace_id": self.trace_id,
             "request_id": self.request_id,
             "session_id": self.session_id,
             "layer": self.layer,
@@ -63,27 +81,42 @@ class TelemetryEvent:
             "operation": self.operation,
             "status": self.status,
             "message": self.message,
-            "progress_pct": self.progress_pct,
-            "step": self.step,
-            "total_steps": self.total_steps,
-            "phase": self.phase,
-            "details": self.details,
-            "elapsed_ms": self.elapsed_ms,
-            "estimated_ms": self.estimated_ms,
+            "level": self.level,
         }
-    
-    def to_sse_data(self) -> str:
-        """Convert to SSE data format."""
-        return f"data: {json.dumps(self.to_dict())}\n\n"
+        
+        if self.progress_pct is not None:
+            result["progress_pct"] = self.progress_pct
+        if self.step is not None:
+            result["step"] = self.step
+        if self.total_steps is not None:
+            result["total_steps"] = self.total_steps
+        if self.phase:
+            result["phase"] = self.phase
+        if self.payload:
+            result["payload"] = self.payload
+        if self.metrics:
+            result["metrics"] = self.metrics
+        if self.sub_threads:
+            result["sub_threads"] = self.sub_threads
+        if self.details:
+            result["details"] = self.details
+        if self.elapsed_ms is not None:
+            result["elapsed_ms"] = self.elapsed_ms
+            
+        return result
 
 
-class TelemetryManager:
+class TelemetryEmitter:
     """
-    Manages telemetry events and SSE streaming.
-    Singleton pattern for global access.
+    遥测发射器 - 批量 HTTP POST 发送到 Gateway
+    
+    特性:
+    - 异步批量发送
+    - 本地缓冲防丢
+    - 自动重连
     """
     
-    _instance: Optional["TelemetryManager"] = None
+    _instance: Optional["TelemetryEmitter"] = None
     
     def __new__(cls):
         if cls._instance is None:
@@ -96,158 +129,191 @@ class TelemetryManager:
             return
         
         self._initialized = True
-        self._event_queue: deque[TelemetryEvent] = deque(maxlen=1000)
-        self._subscribers: list[asyncio.Queue] = []
-        self._active_requests: dict[str, dict] = {}  # Track active request states
+        self.gateway_url = os.getenv("GATEWAY_URL", "http://localhost:3000")
+        self.endpoint = urljoin(self.gateway_url, "/v1/telemetry/batch")
+        
+        # 批量发送配置
+        self.batch_size = int(os.getenv("TELEMETRY_BATCH_SIZE", "10"))
+        self.batch_interval = float(os.getenv("TELEMETRY_BATCH_INTERVAL", "0.1"))
+        self.max_retries = int(os.getenv("TELEMETRY_MAX_RETRIES", "3"))
+        
+        # 缓冲
+        self._buffer: deque[TelemetryEvent] = deque(maxlen=1000)
         self._lock = asyncio.Lock()
+        self._session: Optional[aiohttp.ClientSession] = None
+        self._flush_task: Optional[asyncio.Task] = None
+        self._running = False
         
-        logger.info("TelemetryManager initialized")
-    
-    async def emit(self, event: TelemetryEvent) -> None:
-        """
-        Emit a telemetry event to all subscribers.
-        
-        Args:
-            event: The telemetry event to emit
-        """
-        async with self._lock:
-            # Store in queue
-            self._event_queue.append(event)
-            
-            # Track active request state
-            if event.request_id not in self._active_requests:
-                self._active_requests[event.request_id] = {
-                    "started_at": event.timestamp,
-                    "current_layer": event.layer,
-                    "events": [],
-                }
-            
-            self._active_requests[event.request_id]["current_layer"] = event.layer
-            self._active_requests[event.request_id]["events"].append(event.to_dict())
-            
-            # Broadcast to all subscribers
-            dead_subscribers = []
-            for queue in self._subscribers:
-                try:
-                    queue.put_nowait(event)
-                except asyncio.QueueFull:
-                    dead_subscribers.append(queue)
-            
-            # Clean up dead subscribers
-            for dead in dead_subscribers:
-                if dead in self._subscribers:
-                    self._subscribers.remove(dead)
-        
-        logger.debug(
-            "Telemetry event emitted",
-            request_id=event.request_id,
-            layer=event.layer,
-            operation=event.operation,
-            status=event.status,
+        logger.info(
+            "TelemetryEmitter initialized",
+            gateway_url=self.gateway_url,
+            batch_size=self.batch_size,
+            batch_interval=self.batch_interval,
         )
     
-    def subscribe(self) -> asyncio.Queue:
-        """
-        Subscribe to telemetry events.
+    async def start(self):
+        """启动发射器"""
+        if self._running:
+            return
         
-        Returns:
-            Queue that will receive telemetry events
-        """
-        queue: asyncio.Queue = asyncio.Queue(maxsize=100)
-        self._subscribers.append(queue)
-        logger.debug(f"New telemetry subscriber added. Total: {len(self._subscribers)}")
-        return queue
+        self._running = True
+        self._session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=5.0),
+            headers={"Content-Type": "application/json"},
+        )
+        
+        # 启动后台刷新任务
+        self._flush_task = asyncio.create_task(self._flush_loop())
+        
+        logger.info("TelemetryEmitter started")
     
-    def unsubscribe(self, queue: asyncio.Queue) -> None:
-        """Unsubscribe from telemetry events."""
-        if queue in self._subscribers:
-            self._subscribers.remove(queue)
-            logger.debug(f"Telemetry subscriber removed. Total: {len(self._subscribers)}")
+    async def stop(self):
+        """停止发射器，发送剩余事件"""
+        if not self._running:
+            return
+        
+        self._running = False
+        
+        # 取消刷新任务
+        if self._flush_task:
+            self._flush_task.cancel()
+            try:
+                await self._flush_task
+            except asyncio.CancelledError:
+                pass
+        
+        # 发送剩余事件
+        await self._flush_buffer()
+        
+        # 关闭 session
+        if self._session:
+            await self._session.close()
+            self._session = None
+        
+        logger.info("TelemetryEmitter stopped")
     
-    async def event_stream(self, request_id: Optional[str] = None) -> AsyncIterator[str]:
+    async def emit(self, event: TelemetryEvent):
         """
-        Generate SSE event stream.
+        发射遥测事件
         
         Args:
-            request_id: Optional request ID to filter events
-            
-        Yields:
-            SSE formatted event strings
+            event: 遥测事件
         """
-        queue = self.subscribe()
+        # 确保已启动
+        if not self._running:
+            await self.start()
         
-        try:
-            while True:
-                try:
-                    # Wait for event with timeout
-                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
-                    
-                    # Filter by request_id if specified
-                    if request_id and event.request_id != request_id:
-                        continue
-                    
-                    yield event.to_sse_data()
-                    
-                except asyncio.TimeoutError:
-                    # Send heartbeat
-                    yield ":heartbeat\n\n"
-                    
-        except asyncio.CancelledError:
-            logger.debug("Telemetry stream cancelled")
-            raise
-        finally:
-            self.unsubscribe(queue)
+        async with self._lock:
+            self._buffer.append(event)
+            
+            # 如果 buffer 满了，立即发送
+            if len(self._buffer) >= self.batch_size:
+                asyncio.create_task(self._flush_buffer())
+        
+        logger.debug(
+            "Telemetry event queued",
+            request_id=event.request_id,
+            layer=event.layer_name,
+            operation=event.operation,
+        )
     
-    def get_request_events(self, request_id: str) -> list[dict]:
-        """Get all events for a specific request."""
-        if request_id in self._active_requests:
-            return self._active_requests[request_id]["events"]
-        return []
+    async def _flush_loop(self):
+        """后台定时刷新循环"""
+        while self._running:
+            try:
+                await asyncio.sleep(self.batch_interval)
+                if self._buffer:
+                    await self._flush_buffer()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in telemetry flush loop: {e}")
     
-    def cleanup_request(self, request_id: str) -> None:
-        """Clean up request tracking data."""
-        if request_id in self._active_requests:
-            del self._active_requests[request_id]
-            logger.debug(f"Cleaned up telemetry data for request {request_id}")
+    async def _flush_buffer(self):
+        """发送 buffer 中的事件"""
+        async with self._lock:
+            if not self._buffer:
+                return
+            
+            # 取出所有事件
+            events = list(self._buffer)
+            self._buffer.clear()
+        
+        # 发送事件
+        await self._send_batch(events)
+    
+    async def _send_batch(self, events: list[TelemetryEvent]):
+        """批量发送事件到 Gateway"""
+        if not events or not self._session:
+            return
+        
+        payload = {
+            "events": [e.to_dict() for e in events]
+        }
+        
+        for attempt in range(self.max_retries):
+            try:
+                async with self._session.post(
+                    self.endpoint,
+                    json=payload,
+                ) as response:
+                    if 200 <= response.status < 300:
+                        logger.debug(
+                            f"Telemetry batch sent successfully",
+                            count=len(events),
+                        )
+                        return
+                    else:
+                        text = await response.text()
+                        logger.warning(
+                            f"Telemetry batch failed with status {response.status}: {text}"
+                        )
+            except Exception as e:
+                logger.error(f"Failed to send telemetry batch (attempt {attempt + 1}): {e}")
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(0.1 * (attempt + 1))  # 指数退避
+        
+        # 所有重试失败，记录日志（buffer 已经清空，数据丢失）
+        logger.error(f"Failed to send telemetry batch after {self.max_retries} attempts, {len(events)} events lost")
 
 
-# Global instance
-_telemetry_manager: Optional[TelemetryManager] = None
+# 全局实例
+_emitter: Optional[TelemetryEmitter] = None
 
 
-def get_telemetry_manager() -> TelemetryManager:
-    """Get the global telemetry manager instance."""
-    global _telemetry_manager
-    if _telemetry_manager is None:
-        _telemetry_manager = TelemetryManager()
-    return _telemetry_manager
+def get_telemetry_emitter() -> TelemetryEmitter:
+    """获取全局发射器实例"""
+    global _emitter
+    if _emitter is None:
+        _emitter = TelemetryEmitter()
+    return _emitter
 
 
-# Convenience function for emitting telemetry
-def emit_telemetry(
+# 向后兼容的 API
+async def emit_telemetry_async(
     request_id: str,
     layer: int,
     layer_name: str,
     component: str,
     operation: str,
     status: str,
-    message: str,
+    message: str = "",
     session_id: Optional[str] = None,
     **kwargs
 ) -> None:
     """
-    Convenience function to emit a telemetry event.
+    异步发射遥测事件
     
     Args:
-        request_id: Request ID
-        layer: Architecture layer (1-7)
-        layer_name: Layer name
-        component: Component name
-        operation: Operation name
-        status: Event status ("start", "progress", "complete", "error")
-        message: Human-readable message
-        session_id: Optional session ID
-        **kwargs: Additional fields (progress_pct, step, total_steps, phase, details, etc.)
+        request_id: 请求 ID
+        layer: 架构层 (1-7)
+        layer_name: 层名称
+        component: 组件名
+        operation: 操作名
+        status: 状态 (start/progress/complete/error)
+        message: 消息
+        session_id: 会话 ID
+        **kwargs: 其他字段
     """
     event = TelemetryEvent(
         request_id=request_id,
@@ -261,13 +327,38 @@ def emit_telemetry(
         **kwargs
     )
     
-    # Use asyncio.create_task for non-blocking emit
+    await get_telemetry_emitter().emit(event)
+
+
+def emit_telemetry(
+    request_id: str,
+    layer: int,
+    layer_name: str,
+    component: str,
+    operation: str,
+    status: str,
+    message: str = "",
+    session_id: Optional[str] = None,
+    **kwargs
+) -> None:
+    """
+    同步发射遥测事件（后台异步执行）
+    
+    向后兼容的 API，保持原有调用方式
+    """
     try:
         loop = asyncio.get_running_loop()
-        asyncio.create_task(get_telemetry_manager().emit(event))
+        asyncio.create_task(emit_telemetry_async(
+            request_id=request_id,
+            layer=layer,
+            layer_name=layer_name,
+            component=component,
+            operation=operation,
+            status=status,
+            message=message,
+            session_id=session_id,
+            **kwargs
+        ))
     except RuntimeError:
-        # No event loop running, just log it
-        logger.debug(f"Telemetry event queued (no event loop): {event_name}", 
-                    request_id=request_id, layer=layer)
-    except Exception as e:
-        logger.error(f"Failed to emit telemetry: {e}")
+        # 没有事件循环，无法发送
+        logger.debug(f"Telemetry event dropped (no event loop)", request_id=request_id)

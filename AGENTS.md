@@ -194,6 +194,30 @@ pip install -e ".[dev]"
 python main.py
 ```
 
+### Rust (kernel-v2/)
+
+```bash
+cd kernel-v2
+
+# Build the project
+~/.cargo/bin/cargo build
+
+# Check compilation without building
+~/.cargo/bin/cargo check
+
+# Run the kernel
+~/.cargo/bin/cargo run
+
+# Build for release
+~/.cargo/bin/cargo build --release
+```
+
+**Note**: protoc (Protocol Buffers compiler) is required for building. It's installed at `~/.local/bin/protoc`. Set the environment variable before building:
+```bash
+export PROTOC=$HOME/.local/bin/protoc
+~/.cargo/bin/cargo build
+```
+
 ## Lint Commands
 
 ### TypeScript/JavaScript
@@ -222,6 +246,21 @@ ruff check . --fix
 
 # Type checking
 mypy .
+```
+
+### Rust
+
+```bash
+cd kernel-v2
+
+# Format code
+~/.cargo/bin/cargo fmt
+
+# Lint with Clippy
+~/.cargo/bin/cargo clippy -- -D warnings
+
+# Check without building
+~/.cargo/bin/cargo check
 ```
 
 ## Latest Test Results
@@ -438,9 +477,17 @@ class MyModel(BaseModel):
 - `LLM_TEMPERATURE` - Generation temperature (default: 0.7)
 - `LLM_MAX_TOKENS` - Max tokens per generation (default: 4000)
 
+### Rust Kernel (kernel-v2)
+- `PORT` - Kernel HTTP port (default: 8000)
+- `HOST` - Bind address (default: 0.0.0.0)
+- `DATA_PATH` - Runtime data storage path (default: ./data)
+- `OPENAI_API_KEY` - OpenAI API key for LLM calls
+- `ARK_API_KEY` - ByteDance Ark API key (alternative)
+- `PROTOC` - Path to protobuf compiler (default: ~/.local/bin/protoc)
+
 ### Integration Test
 - `GATEWAY_STORAGE_PATH` - Test data directory for Gateway
-- `DATA_PATH` - Test data directory for Python Kernel
+- `DATA_PATH` - Test data directory for Python/Rust Kernel
 
 ## Integration Testing
 

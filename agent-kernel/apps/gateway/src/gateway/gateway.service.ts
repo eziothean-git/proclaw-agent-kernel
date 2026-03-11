@@ -5,6 +5,7 @@ import { StorageService, OutputMessage } from '../core/storage.service';
 import { RouterService } from '../router/router.service';
 import { RequestManagerClient } from '../grpc/request-manager.client';
 import { RawRequestStorageService, RawChatRequest, RawRequestEntry } from '../raw-request/raw-request-storage.service';
+import { TelemetryAggregatorService } from '../telemetry/telemetry-aggregator.service';
 
 interface ChatRequestDto {
   sessionId?: string;
@@ -43,6 +44,7 @@ export class GatewayService {
     private readonly routerService: RouterService,
     private readonly requestManagerClient: RequestManagerClient,
     private readonly rawRequestStorage: RawRequestStorageService,
+    private readonly telemetryAggregator: TelemetryAggregatorService,
   ) {
     // Listen for responses from outbox
     this.storageService.watchOutbox((response) => {
@@ -56,6 +58,20 @@ export class GatewayService {
     this.logger.log(
       `Received chat request ${requestId} from user ${dto.userId} via ${dto.platform || 'unknown'}`,
     );
+
+    // Telemetry: Request received at Gateway
+    await this.telemetryAggregator.receiveEvent({
+      trace_id: requestId,
+      request_id: requestId,
+      session_id: dto.sessionId,
+      timestamp: new Date().toISOString(),
+      layer: 1,
+      layer_name: 'Gateway',
+      component: 'GatewayService',
+      operation: 'request_received',
+      status: 'start',
+      message: `Request received: ${dto.message.substring(0, 50)}...`,
+    });
 
     // Determine session
     let sessionId = dto.sessionId;
@@ -176,6 +192,20 @@ export class GatewayService {
       this.responseHandlers.delete(requestId);
       handler.resolve(response);
       this.logger.log(`Response delivered for request ${requestId}`);
+      
+      // Telemetry: Request completed at Gateway
+      this.telemetryAggregator.receiveEvent({
+        trace_id: requestId,
+        request_id: requestId,
+        session_id: response.header.sessionId,
+        timestamp: new Date().toISOString(),
+        layer: 1,
+        layer_name: 'Gateway',
+        component: 'GatewayService',
+        operation: 'request_completed',
+        status: response.status === 'completed' ? 'complete' : 'error',
+        message: `Request completed with status: ${response.status}`,
+      });
     } else {
       this.logger.debug(`Received response for ${requestId} but no handler registered`);
     }

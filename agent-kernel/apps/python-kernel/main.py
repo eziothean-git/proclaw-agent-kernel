@@ -26,7 +26,7 @@ from scheduled_dispatcher import ScheduledRequestStorage, ScheduledRequestDispat
 from session_host.session_host import get_session_host
 from storage.runtime_store import get_memory_manager
 from thread_runtime.scheduler import get_scheduler
-from telemetry import get_telemetry_manager, emit_telemetry
+from telemetry import get_telemetry_emitter
 
 logger = structlog.get_logger()
 
@@ -68,6 +68,10 @@ async def lifespan(app: FastAPI):
     )
     await _scheduled_dispatcher.start()
     
+    # Start telemetry emitter
+    telemetry_emitter = get_telemetry_emitter()
+    await telemetry_emitter.start()
+    
     logger.info("Python Kernel ready")
     yield
     
@@ -90,6 +94,10 @@ async def lifespan(app: FastAPI):
         await lock_cleanup_task
     except asyncio.CancelledError:
         pass
+    
+    # Stop telemetry emitter
+    telemetry_emitter = get_telemetry_emitter()
+    await telemetry_emitter.stop()
     
     # Shutdown kernel gracefully
     await shutdown_kernel()
@@ -339,44 +347,6 @@ async def get_task_status(task_id: str):
         "completed_at": task.completed_at.isoformat() if task.completed_at else None,
         "output": task.output,
         "error": task.error,
-    }
-
-
-@app.get("/telemetry/stream")
-async def telemetry_stream(request_id: Optional[str] = None):
-    """
-    SSE endpoint for real-time telemetry streaming.
-    """
-    from fastapi.responses import StreamingResponse
-    
-    telemetry_manager = get_telemetry_manager()
-    
-    async def event_generator():
-        async for data in telemetry_manager.event_stream(request_id):
-            yield data
-    
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-@app.get("/telemetry/requests/{request_id}")
-async def get_telemetry_events(request_id: str):
-    """
-    Get all telemetry events for a specific request.
-    """
-    telemetry_manager = get_telemetry_manager()
-    events = telemetry_manager.get_request_events(request_id)
-    return {
-        "request_id": request_id,
-        "event_count": len(events),
-        "events": events,
     }
 
 

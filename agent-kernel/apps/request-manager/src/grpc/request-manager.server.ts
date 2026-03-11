@@ -5,6 +5,7 @@ import * as protoLoader from '@grpc/proto-loader';
 import * as path from 'path';
 import { RequestTask } from '../interfaces';
 import { PriorityQueueService } from '../services/priority-queue.service';
+import { PriorityRequestManagerService } from '../services/priority-request-manager.service';
 import { SessionAffinityService } from '../services/session-affinity.service';
 import { PersistenceService } from '../services/persistence.service';
 import { AuditLoggerService } from '../services/audit-logger.service';
@@ -52,6 +53,7 @@ export class RequestManagerGrpcServer implements OnModuleInit {
     private readonly auditLogger: AuditLoggerService,
     private readonly workerPool: WorkerPoolService,
     private readonly requestState: RequestStateService,
+    private readonly priorityRequestManager: PriorityRequestManagerService,
   ) {
     this.port = this.configService.get<number>('REQUEST_MANAGER_GRPC_PORT', 50052);
     const possiblePaths = [
@@ -75,6 +77,56 @@ export class RequestManagerGrpcServer implements OnModuleInit {
     await this.startServer();
     // Start task dispatcher loop
     this.startTaskDispatcher();
+    
+    // Register task dispatch callback with PriorityRequestManagerService
+    this.priorityRequestManager.setTaskDispatchCallback(
+      this.dispatchTaskViaGrpc.bind(this)
+    );
+  }
+  
+  /**
+   * Dispatch a task via gRPC stream to an available Python Kernel worker.
+   * This is called by PriorityRequestManagerService.
+   */
+  private async dispatchTaskViaGrpc(task: RequestTask): Promise<boolean> {
+    if (this.kernelWorkers.size === 0) {
+      this.logger.warn(`No kernel workers available for task ${task.requestId}`);
+      return false;
+    }
+    
+    // Get first available worker
+    const [workerId, worker] = this.kernelWorkers.entries().next().value;
+    if (!worker) {
+      return false;
+    }
+    
+    try {
+      // Send task to worker via gRPC stream
+      const receivedAtProto = {
+        seconds: Math.floor(task.createdAt.getTime() / 1000).toString(),
+        nanos: (task.createdAt.getTime() % 1000) * 1000000,
+      };
+      
+      worker.write({
+        requestId: task.requestId,
+        sessionId: task.sessionId,
+        userId: task.userId,
+        body: task.body,
+        metadata: task.metadata,
+        receivedAt: receivedAtProto,
+        timeoutSeconds: Math.floor((task.timeoutAt.getTime() - Date.now()) / 1000),
+      });
+      
+      // Track active task
+      this.activeTasks.set(task.requestId, task);
+      
+      this.logger.log(`Task ${task.requestId} dispatched to worker ${workerId} via gRPC`);
+      return true;
+      
+    } catch (error) {
+      this.logger.error(`Failed to dispatch task ${task.requestId}: ${error.message}`);
+      return false;
+    }
   }
 
   private async startServer(): Promise<void> {
@@ -514,6 +566,9 @@ export class RequestManagerGrpcServer implements OnModuleInit {
     // Remove from active tasks
     this.activeTasks.delete(requestId);
     
+    // Notify PriorityRequestManagerService to handle completion
+    await this.priorityRequestManager.handleTaskCompleted(requestId, success, errorMessage);
+    
     callback(null, {
       acknowledged: true,
     });
@@ -522,10 +577,10 @@ export class RequestManagerGrpcServer implements OnModuleInit {
   // ============ Task Dispatching ============
 
   private startTaskDispatcher(): void {
-    // Periodically check queue and dispatch to available workers
-    setInterval(() => {
-      this.dispatchPendingTasks();
-    }, 100);
+    // Task dispatching is now handled by PriorityRequestManagerService
+    // via the dispatchTaskViaGrpc callback. This method is kept for compatibility
+    // but no longer actively dispatches tasks.
+    this.logger.log('Task dispatcher initialized (using PriorityRequestManagerService)');
   }
 
   private async dispatchPendingTasks(): Promise<void> {

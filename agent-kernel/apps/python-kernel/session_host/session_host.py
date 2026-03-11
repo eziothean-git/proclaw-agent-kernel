@@ -17,6 +17,7 @@ from schemas.models import (
     TaskStatus,
 )
 from storage.runtime_store import get_memory_manager
+from telemetry import emit_telemetry
 from thread_runtime.scheduler import get_scheduler
 
 logger = structlog.get_logger()
@@ -32,9 +33,37 @@ class SessionHost:
 
     async def handle_request(self, request: Request, intermediate_repr: IntermediateRepresentation) -> dict[str, Any]:
         self.logger.info("Handling request", request_id=request.id, process_count=len(intermediate_repr.processes))
+        
+        # Telemetry: Session orchestration start
+        emit_telemetry(
+            request_id=request.id,
+            layer=5,
+            layer_name="Session Host",
+            component="SessionHost",
+            operation="session_orchestration",
+            status="start",
+            message=f"Orchestrating {len(intermediate_repr.processes)} processes",
+            session_id=self.session.id,
+            sub_threads=[],
+        )
+        
         results = []
-        for process_def in intermediate_repr.processes:
+        for idx, process_def in enumerate(intermediate_repr.processes):
             task_id = str(uuid4())
+            
+            # Telemetry: Task progress update
+            emit_telemetry(
+                request_id=request.id,
+                layer=5,
+                layer_name="Session Host",
+                component="SessionHost",
+                operation="task_progress",
+                status="progress",
+                message=f"Spawning task {idx + 1}/{len(intermediate_repr.processes)}: {process_def.get('goal', 'Execute task')[:50]}...",
+                session_id=self.session.id,
+                sub_threads=self._build_sub_threads_status(),
+            )
+            
             result = await self.spawn_task(
                 request=request,
                 task_id=task_id,
@@ -77,6 +106,27 @@ class SessionHost:
                 error=str(e),
             )
             memory_candidates = []
+
+        # Telemetry: Session orchestration complete
+        emit_telemetry(
+            request_id=request.id,
+            layer=5,
+            layer_name="Session Host",
+            component="SessionHost",
+            operation="session_orchestration",
+            status="complete" if overall_status == "completed" else "error",
+            message=f"All {len(results)} tasks completed with status: {overall_status}",
+            session_id=self.session.id,
+            sub_threads=[
+                {
+                    "thread_id": result.get("task_id"),
+                    "status": result.get("status"),
+                    "progress_pct": 100 if result.get("status") == "completed" else 0,
+                    "current_phase": "complete",
+                }
+                for result in results
+            ],
+        )
 
         return {
             "session_id": self.session.id,
@@ -261,6 +311,18 @@ class SessionHost:
 
     def get_all_tasks(self) -> list[TaskSnapshot]:
         return list(self.processes.values())
+
+    def _build_sub_threads_status(self) -> list[dict[str, Any]]:
+        """Build sub_threads status for telemetry."""
+        return [
+            {
+                "thread_id": task.id,
+                "status": task.status.value if hasattr(task.status, 'value') else str(task.status),
+                "progress_pct": 0,
+                "current_phase": "idle",
+            }
+            for task in self.processes.values()
+        ]
 
 
 _session_hosts: dict[str, SessionHost] = {}

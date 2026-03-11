@@ -11,6 +11,9 @@ import { RequestTask, ProcessResult } from '../interfaces';
 import { GrpcError, TimeoutException } from '../exceptions';
 import { PRIORITY_NAMES } from '../constants';
 
+// Callback type for task dispatch via gRPC stream
+type TaskDispatchCallback = (task: RequestTask) => Promise<boolean>;
+
 /**
  * Ensure value is a Date object.
  * Handles cases where Date was serialized to string (e.g., from storage).
@@ -35,6 +38,7 @@ export class PriorityRequestManagerService implements OnModuleInit, OnApplicatio
   private readonly logger = new Logger(PriorityRequestManagerService.name);
   private isRunning = false;
   private schedulerIntervalMs: number;
+  private taskDispatchCallback: TaskDispatchCallback | null = null;
 
   constructor(
     private readonly configService: ConfigService,
@@ -47,6 +51,15 @@ export class PriorityRequestManagerService implements OnModuleInit, OnApplicatio
     private readonly requestState: RequestStateService,
   ) {
     this.schedulerIntervalMs = this.configService.get<number>('SCHEDULER_INTERVAL_MS', 100);
+  }
+
+  /**
+   * Set the callback for dispatching tasks via gRPC stream.
+   * This is called by RequestManagerGrpcServer to inject the gRPC dispatch function.
+   */
+  setTaskDispatchCallback(callback: TaskDispatchCallback): void {
+    this.taskDispatchCallback = callback;
+    this.logger.log('Task dispatch callback registered');
   }
 
   async onModuleInit(): Promise<void> {
@@ -112,22 +125,83 @@ export class PriorityRequestManagerService implements OnModuleInit, OnApplicatio
   }
 
   private async processTask(task: RequestTask): Promise<void> {
-    const startTime = Date.now();
-
     try {
-      const { success, result, error } = await this.workerPool.processTask(task);
-
-      if (success && result) {
-        // 任务成功完成
-        await this.handleSuccess(task, result);
-      } else if (error) {
-        // 任务失败，尝试重试
-        await this.handleFailure(task, error);
+      // Check if gRPC dispatch callback is available
+      if (!this.taskDispatchCallback) {
+        this.logger.warn(`No gRPC dispatch callback registered for task ${task.requestId}`);
+        // Release slot and requeue task
+        await this.workerPool.releaseSlot(task.requestId);
+        await this.priorityQueue.enqueue(task);
+        return;
       }
 
-    } catch (unexpectedError) {
-      this.logger.error(`Unexpected error processing task ${task.requestId}: ${unexpectedError.message}`);
-      await this.handleFailure(task, unexpectedError as Error);
+      // Dispatch task via gRPC stream
+      const dispatched = await this.taskDispatchCallback(task);
+      
+      if (!dispatched) {
+        this.logger.warn(`Failed to dispatch task ${task.requestId} via gRPC stream`);
+        // Release slot and requeue task
+        await this.workerPool.releaseSlot(task.requestId);
+        await this.priorityQueue.enqueue(task);
+        return;
+      }
+
+      // Task successfully dispatched, update state
+      this.logger.log(`Task ${task.requestId} dispatched via gRPC stream`);
+      this.requestState.update(task.requestId, {
+        status: 2, // PROCESSING
+        progress: 10,
+        startedAt: new Date(),
+      });
+
+      await this.auditLogger.logRequestStarted(
+        task.requestId,
+        task.sessionId,
+        task.priority,
+        task.retryCount
+      );
+
+    } catch (error) {
+      this.logger.error(`Error dispatching task ${task.requestId}: ${error.message}`);
+      // Release slot and handle failure
+      await this.workerPool.releaseSlot(task.requestId);
+      await this.handleFailure(task, error as Error);
+    }
+  }
+
+  /**
+   * Called by RequestManagerGrpcServer when a task completes (via taskComplete gRPC call).
+   * This handles the completion of a task dispatched via gRPC stream.
+   */
+  async handleTaskCompleted(
+    requestId: string, 
+    success: boolean, 
+    errorMessage?: string
+  ): Promise<void> {
+    const task = this.requestState.get(requestId);
+    if (!task) {
+      this.logger.warn(`Task ${requestId} not found for completion handling`);
+      return;
+    }
+
+    // Release the worker slot
+    await this.workerPool.releaseSlot(requestId);
+
+    if (success) {
+      // Create a minimal ProcessResult for handleSuccess
+      const result: ProcessResult = {
+        content: 'Task completed via gRPC stream',
+        actions: [],
+        metrics: {
+          totalDurationMs: task.startedAt 
+            ? Date.now() - task.startedAt.getTime() 
+            : 0,
+        },
+      };
+      await this.handleSuccess(task, result);
+    } else {
+      const error = new Error(errorMessage || 'Task failed');
+      await this.handleFailure(task, error);
     }
   }
 

@@ -48,7 +48,16 @@ echo ""
 echo "2️⃣  启动 Python Kernel (HTTP:8000)..."
 cd "$ROOT/apps/python-kernel"
 find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-PYTHONPATH="$ROOT/apps/python-kernel" nohup python main.py > /tmp/proclaw-kernel.log 2>&1 &
+# 使用 env 确保环境变量传递给 Python
+env PYTHONPATH="$ROOT/apps/python-kernel" \
+    ARK_API_KEY="$ARK_API_KEY" \
+    ARK_MODEL="$ARK_MODEL" \
+    LLM_PROVIDER="$LLM_PROVIDER" \
+    LLM_TEMPERATURE="$LLM_TEMPERATURE" \
+    LLM_MAX_TOKENS="$LLM_MAX_TOKENS" \
+    GATEWAY_URL="$GATEWAY_URL" \
+    DATA_PATH="$DATA_PATH" \
+    nohup python main.py > /tmp/proclaw-kernel.log 2>&1 &
 sleep 5
 if ! curl -s http://localhost:8000/health >/dev/null 2>&1; then
     echo -e "${RED}❌ Python Kernel 启动失败${NC}"

@@ -1,0 +1,13 @@
+[package]
+name = "composition_benchmark"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
+tokio = { version = "1.35", features = ["full"] }
+proclaw-block-composer = { path = ".." }
+
+[[bench]]
+name = "composition_benchmark"
+harness = false

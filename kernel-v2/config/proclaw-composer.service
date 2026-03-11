@@ -1,0 +1,66 @@
+[Unit]
+Description=ProClaw BlockComposer - High-performance context composition service
+Documentation=https://docs.proclaw.ai
+After=network.target
+Wants=proclaw-indexer.service
+
+[Service]
+Type=notify
+User=proclaw
+Group=proclaw
+WorkingDirectory=/var/lib/proclaw
+
+# Binary path
+ExecStart=/usr/local/bin/proclaw-composer --config /etc/proclaw/composer.yaml
+
+# Graceful reload
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Environment variables
+Environment="RUST_LOG=info"
+Environment="RUST_BACKTRACE=1"
+Environment="COMPOSER_SOCKET_PATH=/run/proclaw/composer.sock"
+Environment="COMPOSER_DATA_DIR=/var/lib/proclaw"
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+MemoryMax=2G
+MemorySwapMax=0
+CPUQuota=200%
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/proclaw /var/log/proclaw /run/proclaw
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+
+# Capability limits
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Restart policy
+Restart=on-failure
+RestartSec=5
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# Notify systemd
+NotifyAccess=main
+
+[Install]
+WantedBy=multi-user.target
