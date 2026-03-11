@@ -3,7 +3,9 @@ syntax = "proto3";
 package requestmanager;
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
 
+// 核心服务：请求管理
 service RequestManager {
   // 提交请求
   rpc SubmitRequest (SubmitRequestRequest) returns (SubmitRequestResponse);
@@ -14,7 +16,7 @@ service RequestManager {
   // 取消请求
   rpc CancelRequest (CancelRequestRequest) returns (CancelRequestResponse);
   
-  // 流式状态更新
+  // 流式状态更新（Gateway订阅）
   rpc StreamRequestStatus (GetRequestStatusRequest) returns (stream StatusUpdate);
   
   // 获取队列状态
@@ -25,6 +27,26 @@ service RequestManager {
   
   // 手动重试请求
   rpc RetryRequest (RetryRequestRequest) returns (RetryRequestResponse);
+  
+  // 优雅关闭服务
+  rpc Shutdown (ShutdownRequest) returns (ShutdownResponse);
+  
+  // 健康检查
+  rpc HealthCheck (google.protobuf.Empty) returns (HealthCheckResponse);
+}
+
+// KernelWorker服务：Python Kernel与Request Manager通信
+// Request Manager推送任务流，Kernel直接HTTP回调Gateway
+// Kernel只向Request Manager报告心跳和负载
+service KernelWorker {
+  // Kernel连接后，RM通过Server Stream推送任务
+  rpc StreamTasks (WorkerConnectRequest) returns (stream KernelTask);
+  
+  // 心跳（用于调度决策）
+  rpc Heartbeat (HeartbeatRequest) returns (HeartbeatResponse);
+  
+  // 任务完成通知（仅用于调度状态更新，不传递结果）
+  rpc TaskComplete (TaskCompleteRequest) returns (TaskCompleteResponse);
 }
 
 // 请求状态
@@ -46,6 +68,8 @@ enum Priority {
   P3_NORMAL = 3;
   P4_BACKGROUND = 4;
 }
+
+// ========== RequestManager 消息 ==========
 
 // 提交请求
 message SubmitRequestRequest {
@@ -143,4 +167,67 @@ message RetryRequestResponse {
   bool success = 2;
   RequestStatus new_status = 3;
   string message = 4;
+}
+
+// 优雅关闭
+message ShutdownRequest {
+  int32 timeout_seconds = 1;  // 优雅关闭超时时间
+  string reason = 2;
+}
+
+message ShutdownResponse {
+  bool success = 1;
+  string message = 2;
+  int32 active_requests = 3;
+  google.protobuf.Timestamp shutdown_at = 4;
+}
+
+// 健康检查
+message HealthCheckResponse {
+  bool healthy = 1;
+  string version = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  map<string, string> details = 4;
+}
+
+// ========== KernelWorker 消息 ==========
+
+// 任务消息（Request Manager -> Kernel）
+message KernelTask {
+  string request_id = 1;
+  string session_id = 2;
+  string user_id = 3;
+  string body = 4;
+  map<string, string> metadata = 5;
+  google.protobuf.Timestamp received_at = 6;
+  int32 timeout_seconds = 7;
+}
+
+// Worker连接请求
+message WorkerConnectRequest {
+  string worker_id = 1;
+  int32 capacity = 2;  // 可同时处理的任务数
+}
+
+// 心跳
+message HeartbeatRequest {
+  string worker_id = 1;
+  int32 active_tasks = 2;
+  int32 available_slots = 3;
+}
+
+message HeartbeatResponse {
+  bool acknowledged = 1;
+  google.protobuf.Timestamp server_time = 2;
+}
+
+// 任务完成通知
+message TaskCompleteRequest {
+  string request_id = 1;
+  bool success = 2;
+  string error_message = 3;  // 仅用于日志，不传递实际结果
+}
+
+message TaskCompleteResponse {
+  bool acknowledged = 1;
 }

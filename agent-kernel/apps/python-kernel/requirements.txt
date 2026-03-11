@@ -33,6 +33,10 @@ python-dotenv>=1.0.0
 ### Utilities
 croniter>=2.0.0
 
+### gRPC
+grpcio>=1.59.0
+grpcio-tools>=1.59.0
+
 ## Development Dependencies
 pytest>=7.4.0
 pytest-asyncio>=0.21.0

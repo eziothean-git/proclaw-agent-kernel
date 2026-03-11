@@ -10,12 +10,11 @@ import { PersistenceService } from '../services/persistence.service';
 import { AuditLoggerService } from '../services/audit-logger.service';
 import { WorkerPoolService } from '../services/worker-pool.service';
 import { RequestStateService } from '../services/request-state.service';
-import { QueueFullException, RequestNotFoundException } from '../exceptions';
+import { QueueFullException } from '../exceptions';
 import { PRIORITY_LEVELS } from '../constants';
 
 /**
  * Ensure value is a Date object.
- * Handles cases where Date was serialized to string (e.g., from storage).
  */
 function ensureDate(value: Date | string | undefined): Date | undefined {
   if (!value) {
@@ -24,7 +23,6 @@ function ensureDate(value: Date | string | undefined): Date | undefined {
   if (value instanceof Date) {
     return value;
   }
-  // Handle ISO string or other date string formats
   if (typeof value === 'string') {
     const parsed = new Date(value);
     return isNaN(parsed.getTime()) ? undefined : parsed;
@@ -39,6 +37,13 @@ export class RequestManagerGrpcServer implements OnModuleInit {
   private readonly port: number;
   private readonly protoPath: string;
 
+  // Kernel Worker连接管理
+  private kernelWorkers: Map<string, grpc.ServerWritableStream<any, any>> = new Map();
+  private pendingTasks: RequestTask[] = [];
+  
+  // 活跃任务跟踪（用于统计）
+  private activeTasks: Map<string, RequestTask> = new Map();
+
   constructor(
     private readonly configService: ConfigService,
     private readonly priorityQueue: PriorityQueueService,
@@ -49,12 +54,11 @@ export class RequestManagerGrpcServer implements OnModuleInit {
     private readonly requestState: RequestStateService,
   ) {
     this.port = this.configService.get<number>('REQUEST_MANAGER_GRPC_PORT', 50052);
-    // 尝试多个路径来找到 proto 文件
     const possiblePaths = [
-      path.join(__dirname, '../../src/proto/request-manager.proto'), // 开发模式 (ts-node)
-      path.join(__dirname, '../../proto/request-manager.proto'),     // 生产模式 (dist)
-      path.join(process.cwd(), 'src/proto/request-manager.proto'),   // 当前工作目录
-      path.join(process.cwd(), 'proto/request-manager.proto'),       // 备选
+      path.join(__dirname, '../../src/proto/request-manager.proto'),
+      path.join(__dirname, '../../proto/request-manager.proto'),
+      path.join(process.cwd(), 'src/proto/request-manager.proto'),
+      path.join(process.cwd(), 'proto/request-manager.proto'),
     ];
     
     this.protoPath = possiblePaths.find(p => {
@@ -64,16 +68,18 @@ export class RequestManagerGrpcServer implements OnModuleInit {
       } catch {
         return false;
       }
-    }) || possiblePaths[0]; // 默认使用第一个路径
+    }) || possiblePaths[0];
   }
 
   async onModuleInit(): Promise<void> {
     await this.startServer();
+    // Start task dispatcher loop
+    this.startTaskDispatcher();
   }
 
   private async startServer(): Promise<void> {
     const packageDefinition = protoLoader.loadSync(this.protoPath, {
-      keepCase: false,  // 自动将 snake_case 转换为 camelCase
+      keepCase: false,
       longs: String,
       enums: String,
       defaults: true,
@@ -81,11 +87,11 @@ export class RequestManagerGrpcServer implements OnModuleInit {
     });
 
     const proto = grpc.loadPackageDefinition(packageDefinition) as any;
-    const RequestManagerService = proto.requestmanager.RequestManager;
-
+    
     this.server = new grpc.Server();
     
-    this.server.addService(RequestManagerService.service, {
+    // RequestManager service
+    this.server.addService(proto.requestmanager.RequestManager.service, {
       submitRequest: this.handleSubmitRequest.bind(this),
       getRequestStatus: this.handleGetRequestStatus.bind(this),
       cancelRequest: this.handleCancelRequest.bind(this),
@@ -93,6 +99,15 @@ export class RequestManagerGrpcServer implements OnModuleInit {
       getQueueStatus: this.handleGetQueueStatus.bind(this),
       getWorkerStatus: this.handleGetWorkerStatus.bind(this),
       retryRequest: this.handleRetryRequest.bind(this),
+      shutdown: this.handleShutdown.bind(this),
+      healthCheck: this.handleHealthCheck.bind(this),
+    });
+
+    // KernelWorker service (Server streaming tasks)
+    this.server.addService(proto.requestmanager.KernelWorker.service, {
+      streamTasks: this.handleKernelWorkerStreamTasks.bind(this),
+      heartbeat: this.handleKernelWorkerHeartbeat.bind(this),
+      taskComplete: this.handleTaskComplete.bind(this),
     });
 
     this.server.bindAsync(
@@ -104,17 +119,17 @@ export class RequestManagerGrpcServer implements OnModuleInit {
           return;
         }
         this.logger.log(`Request Manager gRPC server started on port ${port}`);
+        this.logger.log('Services: RequestManager, KernelWorker (task streaming + heartbeat)');
       }
     );
   }
 
-  // ============ Handlers ============
+  // ============ RequestManager Handlers ============
 
   private async handleSubmitRequest(call: any, callback: any): Promise<void> {
     const request = call.request;
     
     try {
-      // 映射优先级
       const priorityMap: Record<number, number> = {
         0: PRIORITY_LEVELS.P0_EMERGENCY,
         1: PRIORITY_LEVELS.P1_SCHEDULED,
@@ -124,7 +139,6 @@ export class RequestManagerGrpcServer implements OnModuleInit {
       };
       const priority = priorityMap[request.priority] ?? PRIORITY_LEVELS.P3_NORMAL;
 
-      // 创建任务
       const task: RequestTask = {
         requestId: request.requestId,
         sessionId: request.sessionId,
@@ -139,18 +153,7 @@ export class RequestManagerGrpcServer implements OnModuleInit {
         progress: 0,
       };
 
-      // 持久化到 inbox
-      await this.persistenceService.saveToInbox({
-        requestId: task.requestId,
-        sessionId: task.sessionId,
-        userId: task.userId,
-        priority,
-        body: task.body,
-        metadata: task.metadata,
-        receivedAt: new Date().toISOString(),
-        filePath: '',
-      });
-
+      // 持久化（不再写入inbox文件，只保留审计日志）
       await this.auditLogger.logRequestReceived(
         task.requestId,
         task.sessionId,
@@ -164,14 +167,11 @@ export class RequestManagerGrpcServer implements OnModuleInit {
       if (!canProcess) {
         await this.sessionAffinity.enqueueForSession(task);
       } else {
-        // 入队
-        const queuePosition = await this.priorityQueue.enqueue(task);
+        await this.priorityQueue.enqueue(task);
       }
 
-      // 存储请求状态
       this.requestState.set(task.requestId, task);
 
-      // 计算预估等待时间
       const estimatedWaitMs = this.calculateEstimatedWaitTime(task);
 
       callback(null, {
@@ -211,8 +211,6 @@ export class RequestManagerGrpcServer implements OnModuleInit {
     }
 
     const now = Date.now();
-    
-    // Ensure dates are Date objects (they may be strings when loaded from storage)
     const startedAt = ensureDate(task.startedAt);
     const createdAt = ensureDate(task.createdAt);
     const completedAt = ensureDate(task.completedAt);
@@ -224,7 +222,6 @@ export class RequestManagerGrpcServer implements OnModuleInit {
       ? (completedAt?.getTime() || now) - startedAt.getTime()
       : 0;
 
-    // Convert Date objects to protobuf Timestamp format
     const startedAtProto = startedAt
       ? { seconds: Math.floor(startedAt.getTime() / 1000).toString(), nanos: (startedAt.getTime() % 1000) * 1000000 }
       : undefined;
@@ -264,7 +261,6 @@ export class RequestManagerGrpcServer implements OnModuleInit {
         timestamp: new Date().toISOString(),
       });
 
-      // 如果任务完成或失败，结束流
       if (task.status === 3 || task.status === 4 || task.status === 5) {
         call.end();
         clearInterval(interval);
@@ -289,8 +285,7 @@ export class RequestManagerGrpcServer implements OnModuleInit {
       return;
     }
 
-    // 只能取消排队中的请求
-    if (task.status !== 1) { // QUEUED
+    if (task.status !== 1) {
       callback(null, {
         requestId,
         success: false,
@@ -299,7 +294,6 @@ export class RequestManagerGrpcServer implements OnModuleInit {
       return;
     }
 
-    // 从队列中移除
     const removed = this.priorityQueue.remove(requestId);
     if (removed) {
       task.status = 5; // CANCELLED
@@ -326,8 +320,6 @@ export class RequestManagerGrpcServer implements OnModuleInit {
 
   private async handleGetQueueStatus(call: any, callback: any): Promise<void> {
     const sizeByPriority = this.priorityQueue.getSizeByPriority();
-    
-    // 转换优先级键
     const byPriority: Record<number, number> = {};
     for (const [key, value] of Object.entries(sizeByPriority)) {
       byPriority[parseInt(key)] = value;
@@ -343,7 +335,6 @@ export class RequestManagerGrpcServer implements OnModuleInit {
   private async handleGetWorkerStatus(call: any, callback: any): Promise<void> {
     const activeTasks = this.workerPool.getActiveTasks();
     
-    // Convert WorkerState dates to protobuf Timestamp format
     const workerTasks = activeTasks.map(task => ({
       taskId: task.taskId,
       sessionId: task.sessionId,
@@ -374,14 +365,13 @@ export class RequestManagerGrpcServer implements OnModuleInit {
       callback(null, {
         requestId,
         success: false,
-        newStatus: 0, // UNKNOWN
+        newStatus: 0,
         message: `Request ${requestId} not found`,
       });
       return;
     }
 
-    // 只能重试失败或取消的请求
-    if (task.status !== 4 && task.status !== 5) { // FAILED or CANCELLED
+    if (task.status !== 4 && task.status !== 5) {
       callback(null, {
         requestId,
         success: false,
@@ -391,7 +381,6 @@ export class RequestManagerGrpcServer implements OnModuleInit {
       return;
     }
 
-    // 映射新优先级
     let priority: typeof task.priority = task.priority;
     if (newPriority !== undefined && newPriority >= 0 && newPriority <= 4) {
       const priorityMap: Record<number, typeof PRIORITY_LEVELS[keyof typeof PRIORITY_LEVELS]> = {
@@ -404,18 +393,16 @@ export class RequestManagerGrpcServer implements OnModuleInit {
       priority = priorityMap[newPriority];
     }
 
-    // 重置状态
     if (resetRetryCount) {
       task.retryCount = 0;
     }
     task.priority = priority;
-    task.status = 1; // QUEUED
+    task.status = 1;
     task.progress = 0;
     task.errorMessage = undefined;
     task.createdAt = new Date();
     task.timeoutAt = new Date(Date.now() + this.getTimeoutMs(priority));
 
-    // 入队
     await this.priorityQueue.enqueue(task);
 
     await this.auditLogger.logManualRetry(
@@ -428,9 +415,157 @@ export class RequestManagerGrpcServer implements OnModuleInit {
     callback(null, {
       requestId,
       success: true,
-      newStatus: 1, // QUEUED
+      newStatus: 1,
       message: 'Request queued for retry',
     });
+  }
+
+  private async handleShutdown(call: any, callback: any): Promise<void> {
+    const { timeoutSeconds, reason } = call.request;
+    this.logger.log(`Shutdown requested: ${reason}, timeout: ${timeoutSeconds}s`);
+    
+    // Get active request count
+    const activeRequests = this.workerPool.getActiveWorkers();
+    
+    callback(null, {
+      success: true,
+      message: 'Shutdown initiated',
+      activeRequests,
+      shutdownAt: new Date(Date.now() + timeoutSeconds * 1000).toISOString(),
+    });
+
+    // Schedule actual shutdown
+    setTimeout(() => {
+      this.logger.log('Executing shutdown');
+      process.exit(0);
+    }, timeoutSeconds * 1000);
+  }
+
+  private async handleHealthCheck(call: any, callback: any): Promise<void> {
+    callback(null, {
+      healthy: true,
+      version: '0.1.0',
+      timestamp: new Date().toISOString(),
+      details: {
+        connectedWorkers: this.kernelWorkers.size.toString(),
+        activeTasks: this.activeTasks.size.toString(),
+        queueSize: this.priorityQueue.getTotalSize().toString(),
+      },
+    });
+  }
+
+  // ============ KernelWorker Handlers (Server Streaming) ============
+
+  private async handleKernelWorkerStreamTasks(call: grpc.ServerWritableStream<any, any>): Promise<void> {
+    const workerId = call.request.workerId || `worker-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const capacity = call.request.capacity || 1;
+    
+    this.logger.log(`Kernel worker connected: ${workerId} (capacity: ${capacity})`);
+    
+    this.kernelWorkers.set(workerId, call);
+
+    call.on('cancelled', () => {
+      this.logger.log(`Kernel worker disconnected: ${workerId}`);
+      this.kernelWorkers.delete(workerId);
+    });
+
+    call.on('error', (err: any) => {
+      this.logger.error(`Kernel worker error: ${err.message}`);
+      this.kernelWorkers.delete(workerId);
+    });
+
+    // Send any pending tasks immediately
+    this.dispatchPendingTasks();
+    
+    // Keep the stream open
+    return new Promise((resolve) => {
+      call.on('end', () => {
+        this.logger.log(`Kernel worker stream ended: ${workerId}`);
+        this.kernelWorkers.delete(workerId);
+        resolve();
+      });
+    });
+  }
+
+  private async handleKernelWorkerHeartbeat(call: any, callback: any): Promise<void> {
+    const { workerId, activeTasks, availableSlots } = call.request;
+    
+    this.logger.debug(`Heartbeat from worker ${workerId}: ${activeTasks} active, ${availableSlots} available`);
+    
+    callback(null, {
+      acknowledged: true,
+      serverTime: new Date().toISOString(),
+    });
+  }
+
+  private async handleTaskComplete(call: any, callback: any): Promise<void> {
+    const { requestId, success, errorMessage } = call.request;
+    
+    this.logger.log(`Task ${requestId} completed (success: ${success})`);
+    
+    // Update request state (for scheduling/tracking purposes only)
+    this.updateRequestStatus(requestId, {
+      status: success ? 3 : 4, // COMPLETED or FAILED
+      progress: 100,
+      completedAt: new Date(),
+      errorMessage: errorMessage || undefined,
+    });
+    
+    // Remove from active tasks
+    this.activeTasks.delete(requestId);
+    
+    callback(null, {
+      acknowledged: true,
+    });
+  }
+
+  // ============ Task Dispatching ============
+
+  private startTaskDispatcher(): void {
+    // Periodically check queue and dispatch to available workers
+    setInterval(() => {
+      this.dispatchPendingTasks();
+    }, 100);
+  }
+
+  private async dispatchPendingTasks(): Promise<void> {
+    // Get tasks from queue
+    while (this.kernelWorkers.size > 0) {
+      const task = await this.priorityQueue.dequeue();
+      if (!task) break;
+
+      // Find an available worker
+      const availableWorker = Array.from(this.kernelWorkers.values())[0];
+      if (!availableWorker) {
+        // No workers available, put back in queue
+        await this.priorityQueue.enqueue(task);
+        break;
+      }
+
+      // Send task to worker
+      // Convert Date to protobuf Timestamp format
+      const receivedAtProto = {
+        seconds: Math.floor(task.createdAt.getTime() / 1000).toString(),
+        nanos: (task.createdAt.getTime() % 1000) * 1000000,
+      };
+      
+      availableWorker.write({
+        requestId: task.requestId,
+        sessionId: task.sessionId,
+        userId: task.userId,
+        body: task.body,
+        metadata: task.metadata,
+        receivedAt: receivedAtProto,
+        timeoutSeconds: Math.floor((task.timeoutAt.getTime() - Date.now()) / 1000),
+      });
+
+      // Update task status
+      task.status = 2; // PROCESSING
+      task.startedAt = new Date();
+      this.activeTasks.set(task.requestId, task);
+      
+      this.logger.log(`Dispatched task ${task.requestId} to worker`);
+    }
   }
 
   // ============ Helpers ============
@@ -448,11 +583,10 @@ export class RequestManagerGrpcServer implements OnModuleInit {
 
   private calculateEstimatedWaitTime(task: RequestTask): number {
     const queueSize = this.priorityQueue.getTotalSize();
-    const avgProcessingTime = 30000; // 假设平均30秒
+    const avgProcessingTime = 30000;
     return queueSize * avgProcessingTime;
   }
 
-  // 供其他服务更新请求状态
   updateRequestStatus(requestId: string, updates: Partial<RequestTask>): void {
     const task = this.requestState.get(requestId);
     if (task) {

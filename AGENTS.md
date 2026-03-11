@@ -58,12 +58,17 @@ Agent Kernel is a **long-running information flow kernel**, not "a big agent". I
 - Integration Tests - Gateway + Python Kernel full flow testing
 
 > **实现状态:**
-> - **Context Compilers** 已实现完整功能（52/52 测试通过，100% 覆盖率）
-> - **Atomic Agent** 已完成完整实现（50/50 tests passed）
+> - **Context Compilers** 已实现完整功能
+> - **Atomic Agent** 已完成完整实现
 > - **Prime Personality** 已实现：集成 Master Compiler 上下文进行智能意图分类
 > - **Session Host** 已实现：会话编排 + Host 级长期记忆管理
 > - **Long-term Memory** 已实现：文件系统存储，支持按会话/类别/重要性查询
-> - **全要素流程测试** 已完成 (117/117 tests passed, 100% 通过率)
+> - **gRPC信息流架构** ✅ **已完成重构** - 完全移除轮询，使用gRPC流推送
+>   - Gateway → Request Manager: Unary调用SubmitRequest
+>   - Request Manager → Python Kernel: Server Stream推送任务
+>   - Python Kernel → Request Manager: Unary调用SubmitResult
+>   - Request Manager → Gateway: Server Stream推送响应
+> - **优雅关闭** ✅ **已实现** - 10秒超时shutdown端点
 
 **NOT YET Implemented:**
 - 长期记忆检索与利用（会话启动时自动加载相关记忆）
@@ -79,6 +84,42 @@ Agent Kernel is a **long-running information flow kernel**, not "a big agent". I
 5. Session Orchestration Layer (Session Host, Context Compilers)
 6. Task Execution Layer (Agent Thread, Scheduler, Executor)
 7. Memory & Capability Support Layer (Memory Base, SKILL lib)
+
+### 信息流动架构 (重构后 - 2026-03-11)
+
+**核心变更：完全基于gRPC的实时信息流**
+
+```
+┌─────────────────┐         gRPC (Unary)        ┌──────────────────┐
+│    Gateway      │  ─────────────────────────> │ Request Manager  │
+│   (Port 3000)   │  SubmitRequest              │   (Port 50052)   │
+│                 │                             │                  │
+└─────────────────┘         gRPC (Server Stream)└──────────────────┘
+        ^          <─────────────────────────          │
+        │             SubscribeResponses               │
+        │                                              │ gRPC (Server Stream)
+        │              ┌───────────────────────────────┘
+        │              │ StreamTasks
+        │              ▼
+        │      ┌──────────────────┐
+        │      │  Python Kernel   │  gRPC (Unary) SubmitResult
+        │      │   (Port 8000)    │ ───────────────────────────>
+        │      └──────────────────┘
+        │
+        │  HTTP POST /v1/shutdown
+        │  (10s graceful shutdown)
+```
+
+**流类型说明：**
+- **Unary**: 单次请求-响应（提交请求、提交结果）
+- **Server Stream**: 服务端主动推送（任务分发、响应推送）
+- **双向流**: 用于需要持续通信的场景（当前未使用）
+
+**关键变更：**
+1. **移除所有轮询** - 不再轮询文件系统inbox/outbox
+2. **gRPC流推送** - Request Manager主动推送任务给Kernel，推送响应给Gateway
+3. **持久化解耦** - 文件系统仅用于持久化备份，不作为通信机制
+4. **优雅关闭** - 所有服务支持 `/v1/shutdown` HTTP端点，10秒超时
 
 ### Two Object Families
 
@@ -185,137 +226,97 @@ mypy .
 
 ## Latest Test Results
 
-**Date**: 2026-03-10  
-**Status**: ✅ **ALL TESTS PASSED (117/117, 100%)**
+**Date**: 2026-03-11  
+**Status**: 🔄 **迁移到服务端集成测试**
 
-### Test Breakdown
+### 测试策略变更
 
-| Component | Tests | Passed | Status |
-|-----------|-------|--------|--------|
-| Atomic Agent Thread | 50 | 50 | ✅ 100% |
-| Context Compilers | 52 | 52 | ✅ 100% |
-| Prime Personality | N/A | N/A | ✅ 已实现（需 API key 测试） |
-| Session Host + LTM | N/A | N/A | ✅ 已实现（文件系统存储） |
-| Integration Tests | 15 | 15 | ✅ 100% |
-| **Total** | **117** | **117** | **✅ 100%** |
+已删除所有基于 pytest 的单元测试，改为**服务端集成测试**：
 
-### Implementation Summary (2026-03-10)
+| 测试类型 | 描述 | 命令 |
+|----------|------|------|
+| 完整集成测试 | 自动启动所有服务(Gateway+RM+Kernel) | `npm run test:integration` |
+| 客户端测试 | 对运行中的服务发HTTP请求 | `python3 test-client.py` |
+| 历史验证 | 检查SQLite记录完整性 | `npm run test:history` |
 
-**Phase 1: Prime Personality 改造** ✅
-- 移除 mock 模式，集成 Master Compiler 提供的预编译上下文
-- 增强 `_build_enhanced_context()` 方法，提取意图分析、复杂度评分、Artifacts 等信息
-- 更新系统 Prompt，指导 LLM 如何利用预编译上下文
-- 延迟初始化 Agent，支持 `force_mock` 元数据覆盖用于测试
+### 已清理的测试脚本 (2026-03-11)
 
-**Phase 2: Session Host 长期记忆** ✅
-- 新建 `LongTermMemoryStore` 文件系统存储（JSONL + 索引）
-- 扩展 `RuntimeMemoryManager` 添加长期记忆接口
-- 实现 `SessionHost.extract_and_submit_memories()` 在任务完成后自动提取记忆
-- Host 管理记忆，Agent Thread 无访问权限（符合架构要求）
-- 支持按会话、类别、重要性查询
+**删除的启动脚本:**
+- `start-all.sh` - 功能与 `launcher.sh` 重复
+- `proclaw-start.sh` - 过于复杂，功能已合并
 
-### Recent Fixes
+**删除的测试脚本:**
+- `test-integration.sh` (根目录) - 只测试 Gateway，不完整
+- `test-gateway-mailbox.sh` - 功能重复
+- `agent-kernel/test-integration.sh` - 需要手动启动服务
+- `test_report.sh`, `cleanup_report.sh`, `fix_report.sh` - 遗留报告
 
-1. **Health Check Bug Fix** (`apps/python-kernel/main.py`)
-   - Fixed Pydantic validation error for `scheduled_request_stats`
-   - Changed from dict to JSON string serialization
+**删除的 Python 单元测试:**
+- `test_context_compiler.py`
+- `test_compiler_integration.py`
+- `test_prime_compiler.py`
+- `test_llm.py`
+- `test_ark_llm.py`
 
-2. **PersistentEventLog Deserialization Fix** (`apps/python-kernel/context_compiler/persistent_event_log.py`)
-   - Added `_deserialize_event_data()` method to properly convert JSON strings back to Python types
-   - Fixed datetime, EventType, and Phase enum deserialization
-   - Updated test expectations in `test_prime_compiler.py`
-   - Result: 3/3 previously failing tests now pass
+**保留的脚本:**
+- `launcher.sh` - 统一启动入口（根目录）
+- `stop-all.sh` - 停止服务（根目录）
+- `test-client.py` - 服务端测试客户端（根目录）
+- `agent-kernel/scripts/test-gateway-kernel-integration.sh` - 完整集成测试
 
 ### Full Test Report
 
-See `agent-kernel/FULL_TEST_REPORT.md` for detailed test results and execution logs.
+See `agent-kernel/FULL_TEST_REPORT.md` for detailed test results and execution logs (Note: This file is deprecated as we've moved to server-side integration tests).
 
 ## Test Commands
 
-### Integration Tests (Recommended)
+### 测试策略 (Updated 2026-03-11)
+
+**重要**: 本项目已统一为**服务端集成测试**策略，不再维护单元测试。所有测试都通过直接向运行中的服务发送请求来完成。
+
+**可用测试方式:**
+
+1. **完整集成测试** (推荐) - 自动启动所有服务并测试完整流程
+   ```bash
+   cd agent-kernel
+   npm run test:integration
+   ```
+
+2. **手动集成测试** - 保持数据持久化
+   ```bash
+   cd agent-kernel
+   npm run test:integration:manual
+   ```
+
+3. **客户端测试** - 对已运行的服务进行测试
+   ```bash
+   # 先启动服务
+   ./launcher.sh
+   
+   # 然后运行测试客户端
+   python3 test-client.py
+   
+   # 完整测试套件
+   python3 test-client.py --full
+   
+   # 持续压力测试
+   python3 test-client.py --continuous --interval 5
+   ```
+
+4. **验证历史记录**
+   ```bash
+   cd agent-kernel
+   npm run test:history
+   ```
+
+### 快速测试命令
 
 ```bash
-cd agent-kernel
+# 启动所有服务
+./launcher.sh
 
-# Run Gateway + Python Kernel integration test (auto-builds and tests full flow)
-npm run test:integration
-
-# Verify history records after integration test
-npm run test:history
-
-# Manual test with custom data paths
-npm run test:integration:manual
-```
-
-### TypeScript/JavaScript
-
-```bash
-# Run all tests
-npm run test
-
-# Run tests for specific package
-cd agent-kernel/apps/gateway && npm test
-
-# Run single test file
-npm test -- path/to/test.spec.ts
-
-# Run tests in watch mode
-npm run test:watch
-
-# Run tests with coverage
-npm run test:cov
-```
-
-### Python
-
-```bash
-cd agent-kernel
-
-# Run all Python tests
-python -m pytest tests/
-
-# Run single test file
-python -m pytest tests/test_kernel.py
-
-# Run specific test class
-python -m pytest tests/test_kernel.py::TestSchemas
-
-# Run specific test method
-python -m pytest tests/test_kernel.py::TestSchemas::test_session_creation
-
-# Run with verbose output
-python -m pytest tests/ -v
-
-# Run async tests
-python -m pytest tests/ --asyncio-mode=auto
-
-# Run Atomic Agent tests
-PYTHONPATH=/home/eziothean/ProClaw/agent-kernel/apps/python-kernel \
-  python tests/integration_test.py
-
-# Run Atomic Agent Mock E2E test
-PYTHONPATH=/home/eziothean/ProClaw/agent-kernel/apps/python-kernel \
-  python tests/mock_e2e_test.py
-
-# Run Atomic Agent with real LLM (requires ARK_API_KEY)
-export ARK_API_KEY="your-ark-key"
-export ARK_MODEL="glm-4-7-251222"
-PYTHONPATH=/home/eziothean/ProClaw/agent-kernel/apps/python-kernel \
-  python tests/e2e_test.py
-
-# Test Ark LLM connection
-PYTHONPATH=/home/eziothean/ProClaw/agent-kernel/apps/python-kernel \
-  python tests/test_ark_llm.py
-```
-
-### Integration Tests
-
-```bash
-# Run gateway integration test
-./test-integration.sh
-
-# Run gateway mailbox test
-./test-gateway-mailbox.sh
+# 服务启动后，运行测试客户端
+python3 test-client.py
 ```
 
 ## Code Style Guidelines
@@ -499,35 +500,95 @@ data/
 
 ### Documentation
 
-- [Integration Test Guide](./docs/INTEGRATION_TEST.md) - Detailed testing documentation
-- [Integration Test Script](./scripts/test-gateway-kernel-integration.sh) - Automated test script
+- [Integration Test Script](./scripts/test-gateway-kernel-integration.sh) - Automated integration test
 - [History Verification](./scripts/verify-history.py) - History records validator
-- [Atomic Agent Integration Test Plan](./INTEGRATION_TEST_PLAN.md) - Atomic Agent + Ark LLM testing
 - [Atomic Agent Implementation](./apps/python-kernel/ATOMIC_AGENT_IMPLEMENTATION.md) - Implementation details
+- [Context Compiler Implementation](./apps/python-kernel/CONTEXT_COMPILER_IMPLEMENTATION.md) - Compiler details
+- [Test Client](../../test-client.py) - Python client for server-side testing
 
 ## Running the System
 
+### Quick Start
+
 ```bash
-# Start all services in dev mode
-cd agent-kernel && npm run dev
+# Start all services using launcher script
+./launcher.sh
+
+# Stop all services (graceful shutdown with 10s timeout)
+./stop-all.sh
 
 # Or start individually:
-# Terminal 1: Gateway
-cd agent-kernel/apps/gateway && npm run dev
+# Terminal 1: Request Manager (must start first)
+cd agent-kernel/apps/request-manager && npm start
 
 # Terminal 2: Python Kernel
 cd agent-kernel/apps/python-kernel && python main.py
+
+# Terminal 3: Gateway
+cd agent-kernel/apps/gateway && npm run dev
+```
+
+### Service Shutdown
+
+**重要**: 使用 `./stop-all.sh` 脚本进行优雅关闭，它会：
+1. 发送 HTTP `POST /v1/shutdown` 到 Gateway 和 Python Kernel
+2. 等待 10 秒让服务完成当前请求
+3. 强制停止剩余进程
+
+**手动关闭**:
+```bash
+# 对每个服务发送 shutdown 请求
+curl -X POST http://localhost:3000/v1/shutdown   # Gateway
+curl -X POST http://localhost:8000/v1/shutdown   # Python Kernel
+# Request Manager 暂时使用 kill
+```
+
+### Log Locations
+
+**Runtime Logs:**
+- **Request Manager**: `/tmp/request-manager.log`
+- **Python Kernel**: `/tmp/proclaw-kernel.log`
+- **Gateway**: `/tmp/proclaw-gateway.log`
+
+**Integration Test Logs:**
+- `/tmp/request-manager-integration.log`
+- `/tmp/kernel-integration.log`
+- `/tmp/gateway-integration.log`
+
+**Data Storage:**
+- **Gateway**: `agent-kernel/data/gateway/`
+  - `inbox/` - Input requests
+  - `outbox/` - Output responses
+  - `errors/` - Error logs
+  - `logs/` - Operation logs
+- **Python Kernel**: `agent-kernel/data/`
+  - `sessions/` - Session files
+  - `requests/` - Request history
+  - `tasks/` - Task records
+  - `snapshots/` - Execution snapshots
+  - `events/` - Event logs
+- **Long-term Memory**: `agent-kernel/data/long_term_memory/`
+  - `by_session/` - Session-specific memories
+  - `by_category/` - Category-organized memories
+
+**View Logs in Real-time:**
+```bash
+# View all service logs
+tail -f /tmp/request-manager.log /tmp/proclaw-kernel.log /tmp/proclaw-gateway.log
+
+# View specific service log
+tail -f /tmp/proclaw-kernel.log
 ```
 
 ## Testing Checklist
 
 Before submitting changes:
-- [ ] `npm run typecheck` passes
+- [ ] `npm run typecheck` passes (TypeScript/JavaScript)
 - [ ] `npm run lint` passes
-- [ ] `npm run test` passes
 - [ ] Python: `ruff check .` passes
-- [ ] Python: `black .` formatting applied
-- [ ] Integration tests pass if applicable
+- [ ] Python: `black .` formatting applied (100 char line length)
+- [ ] Integration tests pass: `npm run test:integration`
+- [ ] Server-side verification: `python3 test-client.py --full`
 
 ## Resources
 

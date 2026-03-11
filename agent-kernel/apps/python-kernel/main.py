@@ -11,7 +11,6 @@ from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 
-import httpx
 import structlog
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +18,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from context_compiler.master_compiler import get_master_compiler
 from executors_client.directory_lock_manager import get_directory_lock_manager
-from inbox_watcher import get_inbox_watcher
+from grpc_worker_client import get_worker_client
 from kernel_init import initialize_kernel, shutdown_kernel
 from personality.prime_personality import get_prime_personality
 from schemas.models import HealthCheck, Request, RequestStatus, Session
@@ -30,9 +29,6 @@ from thread_runtime.scheduler import get_scheduler
 from telemetry import get_telemetry_manager, emit_telemetry
 
 logger = structlog.get_logger()
-
-# HTTP client for callbacks
-callback_client = httpx.AsyncClient(timeout=60.0)
 
 # Global dispatcher instance for health checks
 _scheduled_dispatcher: ScheduledRequestDispatcher | None = None
@@ -56,11 +52,13 @@ async def lifespan(app: FastAPI):
     lock_manager = get_directory_lock_manager()
     lock_cleanup_task = asyncio.create_task(lock_manager.start_cleanup_task())
     
-    # Start inbox watcher (for Gateway mailbox integration)
-    inbox_watcher = get_inbox_watcher()
-    await inbox_watcher.start()
+    # Start gRPC Worker client (replaces inbox watcher polling)
+    worker_client = get_worker_client()
+    worker_client.set_process_request_func(process_request_grpc)
+    await worker_client.start()
     
     # Start scheduled request dispatcher
+    # Note: Scheduled tasks still write to inbox for now (separate concern from main request flow)
     global _scheduled_dispatcher
     scheduled_storage = ScheduledRequestStorage(base_path=os.environ.get("DATA_PATH", "./data"))
     _scheduled_dispatcher = ScheduledRequestDispatcher(
@@ -74,7 +72,8 @@ async def lifespan(app: FastAPI):
     yield
     
     logger.info("Shutting down Python Kernel")
-    await inbox_watcher.stop()
+    worker_client = get_worker_client()
+    await worker_client.stop()
     if _scheduled_dispatcher:
         await _scheduled_dispatcher.stop()
     await scheduler.stop()
@@ -96,70 +95,37 @@ async def lifespan(app: FastAPI):
     await shutdown_kernel()
     
     await memory_manager.close()
-    await callback_client.aclose()
     logger.info("Python Kernel stopped")
 
 
-app = FastAPI(
-    title="Agent Kernel Python Intelligence Layer",
-    description="Python-based agent intelligence and execution layer",
-    version="0.1.0",
-    lifespan=lifespan,
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-FastAPIInstrumentor.instrument_app(app)
-
-
-@app.get("/health", response_model=HealthCheck)
-async def health_check():
-    components = {
-        "storage": "connected",
-        "scheduler": "running",
-        "mode": "production",
-        "scheduled_dispatcher": "running" if _scheduled_dispatcher and _scheduled_dispatcher._running else "stopped",
-    }
+async def process_request_grpc(
+    request_id: str,
+    session_id: str,
+    user_id: str,
+    body: str,
+    metadata: dict,
+) -> dict:
+    """
+    gRPC专用的请求处理函数。
     
-    if _scheduled_dispatcher:
-        import json
-        stats = _scheduled_dispatcher.get_statistics()
-        components["scheduled_request_stats"] = json.dumps(stats)
-    
-    return HealthCheck(
-        status="healthy",
-        version="0.1.0",
-        timestamp=datetime.utcnow(),
-        components=components,
-    )
-
-
-async def process_request_async(request_id: str, callback_url: str):
-    """异步处理请求并在完成后回调 Gateway"""
+    替代原来的HTTP回调方式，直接返回结果给Request Manager。
+    """
     started_at = time.perf_counter()
     memory_manager = get_memory_manager()
     request: Request | None = None
     
     try:
-        # Load request from storage
-        request = await memory_manager.get_request(request_id)
-        if not request:
-            logger.error("Request not found", request_id=request_id)
-            await send_callback(callback_url, {
-                "request_id": request_id,
-                "status": "failed",
-                "error": {
-                    "category": "system_error",
-                    "message": "Request not found in storage",
-                    "recoverable": False,
-                }
-            })
-            return
+        # 创建临时Request对象用于处理
+        request = Request(
+            id=request_id,
+            session_id=session_id,
+            user_id=user_id,
+            message=body,
+            metadata=metadata,
+        )
+        
+        # 保存请求到存储
+        await memory_manager.save_request(request)
         
         # Get or create session
         session = await memory_manager.get_session(request.session_id)
@@ -191,7 +157,7 @@ async def process_request_async(request_id: str, callback_url: str):
         # Prime Personality processing
         intermediate_repr = await get_prime_personality().process_request(
             request=request, 
-            session_context=master_context
+            session_context=master_context.model_dump() if hasattr(master_context, 'model_dump') else master_context
         )
         
         # FAST PATH: Simple conversation without capabilities - skip Session Host
@@ -228,37 +194,19 @@ async def process_request_async(request_id: str, callback_url: str):
         request.completed_at = datetime.utcnow()
         await memory_manager.save_request(request)
         
-        # Build output IR (Gateway Webhook format)
+        # Build result for gRPC response
         processing_time_ms = int((time.perf_counter() - started_at) * 1000)
-        output_ir = {
-            "request_id": request.id,
-            "session_id": request.session_id,
+        
+        return {
             "status": result["status"],
-            "header": {
-                "timestamp": datetime.utcnow().isoformat(),
-                "processing_time_ms": processing_time_ms,
-            },
-            "body": result.get("output", ""),
-            "metadata": {
-                "actions": result.get("actions", []),
-            },
+            "output": result.get("output", ""),
+            "actions": result.get("actions", []),
+            "processing_time_ms": processing_time_ms,
+            "error": result.get("error") if result["status"] != "completed" else None,
+            "error_category": result.get("error_category"),
+            "error_code": result.get("error_code"),
+            "recoverable": result.get("recoverable", False),
         }
-        
-        if result["status"] != "completed":
-            output_ir["error"] = {
-                "category": result.get("error_category", "unknown"),
-                "code": result.get("error_code", "INTERNAL_ERROR"),
-                "message": result.get("error", "Unknown error"),
-                "stack_trace": result.get("stack_trace"),
-                "recoverable": result.get("recoverable", False),
-            }
-        
-        # Send callback
-        await send_callback(callback_url, output_ir)
-        logger.info("Request completed and callback sent", 
-                   request_id=request_id, 
-                   status=result["status"],
-                   processing_time_ms=processing_time_ms)
         
     except Exception as e:
         logger.error("Request processing failed", 
@@ -271,167 +219,79 @@ async def process_request_async(request_id: str, callback_url: str):
             request.completed_at = datetime.utcnow()
             await memory_manager.save_request(request)
         
-        # Send error callback
-        await send_callback(callback_url, {
-            "request_id": request_id,
-            "status": "failed",
-            "error": {
-                "category": "system_error",
-                "code": "INTERNAL_ERROR",
-                "message": str(e),
-                "stack_trace": traceback.format_exc(),
-                "recoverable": False,
-            }
-        })
-
-
-async def send_callback(callback_url: str, payload: dict, max_retries: int = 3):
-    """发送回调到 Gateway，支持重试"""
-    for attempt in range(max_retries):
-        try:
-            response = await callback_client.post(callback_url, json=payload)
-            if response.status_code < 400:
-                logger.debug("Callback sent successfully", 
-                           url=callback_url, 
-                           attempt=attempt + 1)
-                return True
-            else:
-                logger.warning(f"Callback failed (attempt {attempt + 1}/{max_retries})", 
-                             url=callback_url, 
-                             status=response.status_code,
-                             response=response.text[:200])
-        except Exception as e:
-            logger.warning(f"Callback exception (attempt {attempt + 1}/{max_retries})", 
-                         url=callback_url, 
-                         error=str(e))
-        
-        # 指数退避重试
-        if attempt < max_retries - 1:
-            wait_time = 2 ** attempt  # 1s, 2s, 4s
-            logger.info(f"Retrying callback in {wait_time}s...", 
-                       url=callback_url, 
-                       next_attempt=attempt + 2)
-            await asyncio.sleep(wait_time)
-    
-    # 所有重试失败，记录到失败队列
-    logger.error("Callback failed after all retries", 
-                url=callback_url, 
-                request_id=payload.get("request_id"),
-                max_retries=max_retries)
-    
-    # 保存失败的回调到文件系统，便于后续人工处理
-    await save_failed_callback(callback_url, payload)
-    return False
-
-
-async def save_failed_callback(callback_url: str, payload: dict):
-    """保存失败的回调到文件系统"""
-    try:
-        data_path = os.environ.get("DATA_PATH", "./data")
-        failed_callbacks_dir = os.path.join(data_path, "failed_callbacks")
-        os.makedirs(failed_callbacks_dir, exist_ok=True)
-        
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
-        request_id = payload.get("request_id", "unknown")
-        filename = f"{timestamp}_{request_id}.json"
-        filepath = os.path.join(failed_callbacks_dir, filename)
-        
-        failed_record = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "callback_url": callback_url,
-            "payload": payload,
-            "retry_count": 3,
-        }
-        
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(failed_record, f, ensure_ascii=False, indent=2)
-        
-        logger.info("Failed callback saved to file", 
-                   filepath=filepath, 
-                   request_id=request_id)
-    except Exception as e:
-        logger.error("Failed to save failed callback", 
-                    error=str(e), 
-                    request_id=payload.get("request_id"))
-
-
-@app.post("/v1/execute")
-async def execute_request(request_data: dict, background_tasks: BackgroundTasks):
-    """
-    接收请求并立即返回 request_id，后台异步处理完成后通过 callback 通知 Gateway
-    
-    Expected request_data:
-    {
-        "request_id": "uuid",
-        "session_id": "uuid",
-        "user_id": "user123",
-        "message": "用户消息",
-        "metadata": {...},
-        "callback_url": "http://gateway:3000/gateway/webhook/kernel-response"
-    }
-    """
-    memory_manager = get_memory_manager()
-    
-    try:
-        request_id = request_data.get("request_id", str(uuid4()))
-        session_id = request_data.get("session_id", str(uuid4()))
-        callback_url = request_data.get("callback_url")
-        
-        if not callback_url:
-            raise HTTPException(status_code=400, detail="callback_url is required")
-        
-        # Create request object
-        request = Request(
-            id=request_id,
-            session_id=session_id,
-            user_id=request_data["user_id"],
-            message=request_data["message"],
-            metadata=request_data.get("metadata", {}),
-        )
-        
-        logger.info("Received execution request", 
-                   request_id=request.id, 
-                   session_id=request.session_id, 
-                   user_id=request.user_id,
-                   callback_url=callback_url)
-        
-        # Create session if not exists
-        session = await memory_manager.get_session(request.session_id)
-        if not session:
-            session = Session(id=request.session_id, user_id=request.user_id)
-            await memory_manager.save_session(session)
-        
-        # Save request as pending
-        request.status = RequestStatus.PENDING
-        await memory_manager.save_request(request)
-        await memory_manager.save_event(
-            request.session_id,
-            {
-                "timestamp": datetime.utcnow().isoformat(),
-                "session_id": request.session_id,
-                "request_id": request.id,
-                "phase": "request_queued",
-                "actor": "python_kernel",
-                "summary": request.message,
-                "status": "pending",
-            },
-        )
-        
-        # Start background processing
-        background_tasks.add_task(process_request_async, request_id, callback_url)
-        
+        # Return error result for gRPC
         return {
-            "request_id": request_id,
-            "session_id": session_id,
-            "status": "queued",
-            "message": "Request queued for processing",
+            "status": "failed",
+            "error": str(e),
+            "error_category": "system_error",
+            "error_code": "INTERNAL_ERROR",
+            "recoverable": False,
+            "output": "",
+            "actions": [],
         }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Failed to queue request", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+
+
+app = FastAPI(
+    title="Agent Kernel Python Intelligence Layer",
+    description="Python-based agent intelligence and execution layer",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+FastAPIInstrumentor.instrument_app(app)
+
+
+@app.get("/health", response_model=HealthCheck)
+async def health_check():
+    components = {
+        "storage": "connected",
+        "scheduler": "running",
+        "mode": "grpc_worker",
+        "scheduled_dispatcher": "running" if _scheduled_dispatcher and _scheduled_dispatcher._running else "stopped",
+    }
+    
+    if _scheduled_dispatcher:
+        stats = _scheduled_dispatcher.get_statistics()
+        components["scheduled_request_stats"] = json.dumps(stats)
+    
+    return HealthCheck(
+        status="healthy",
+        version="0.1.0",
+        timestamp=datetime.utcnow(),
+        components=components,
+    )
+
+
+@app.post("/v1/shutdown")
+async def shutdown_service(background_tasks: BackgroundTasks):
+    """
+    优雅关闭服务。
+    
+    给当前正在处理的请求10秒完成，然后退出。
+    """
+    timeout_seconds = 10
+    logger.info(f"Shutdown requested, will wait {timeout_seconds}s for active requests")
+    
+    # 创建一个任务来执行延迟关闭
+    async def delayed_shutdown():
+        await asyncio.sleep(timeout_seconds)
+        logger.info("Shutdown timeout reached, exiting")
+        os._exit(0)
+    
+    background_tasks.add_task(delayed_shutdown)
+    
+    return {
+        "status": "shutting_down",
+        "timeout_seconds": timeout_seconds,
+        "message": f"Service will shutdown in {timeout_seconds} seconds",
+    }
 
 
 @app.get("/v1/sessions/{session_id}/status")
@@ -486,12 +346,6 @@ async def get_task_status(task_id: str):
 async def telemetry_stream(request_id: Optional[str] = None):
     """
     SSE endpoint for real-time telemetry streaming.
-    
-    Args:
-        request_id: Optional request ID to filter events
-        
-    Returns:
-        SSE stream of telemetry events
     """
     from fastapi.responses import StreamingResponse
     
@@ -507,7 +361,7 @@ async def telemetry_stream(request_id: Optional[str] = None):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "X-Accel-Buffering": "no",
         },
     )
 
@@ -516,12 +370,6 @@ async def telemetry_stream(request_id: Optional[str] = None):
 async def get_telemetry_events(request_id: str):
     """
     Get all telemetry events for a specific request.
-    
-    Args:
-        request_id: Request ID
-        
-    Returns:
-        List of telemetry events
     """
     telemetry_manager = get_telemetry_manager()
     events = telemetry_manager.get_request_events(request_id)
