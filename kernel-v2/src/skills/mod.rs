@@ -9,6 +9,7 @@
 
 pub mod bash_skill;
 pub mod composer_skill;
+pub mod gateway_skill;
 #[cfg(feature = "control-plane")]
 pub mod scheduler_skill;
 #[cfg(feature = "control-plane")]
@@ -16,6 +17,7 @@ pub mod os_interface_skill;
 
 pub use bash_skill::{BashSkill, ToolDefinition};
 pub use composer_skill::ComposerSkill;
+pub use gateway_skill::GatewaySkill;
 #[cfg(feature = "control-plane")]
 pub use scheduler_skill::SchedulerSkill;
 #[cfg(feature = "control-plane")]

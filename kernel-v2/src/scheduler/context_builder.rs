@@ -121,15 +121,8 @@ impl ContextBuilder {
         
         // 3. Recent Observations Block
         if !events.is_empty() {
-            let events_text = events.iter()
-                .map(|e| format!("[{:?}] Step {}: {}", 
-                    e.event_type, 
-                    e.step_number,
-                    serde_json::to_string(&e.content).unwrap_or_default()
-                ))
-                .collect::<Vec<_>>()
-                .join("\n");
-            
+            let events_text = self.format_events_readable(events);
+
             blocks.push(Block {
                 block_id: format!("observations_{}", step_number),
                 block_type: BlockType::RecentObservations as i32,
@@ -198,7 +191,92 @@ impl ContextBuilder {
         hasher.update(content.as_bytes());
         format!("{:x}", hasher.finalize())
     }
-    
+
+    fn format_events_readable(&self, events: &[Event]) -> String {
+        use crate::agent_thread::models::EventType;
+
+        let mut formatted = String::from("## Recent Actions and Observations\n\n");
+
+        for event in events {
+            match event.event_type {
+                EventType::ToolCall => {
+                    if let (Some(skill), Some(tool)) = (
+                        event.content.get("skill").and_then(|v| v.as_str()),
+                        event.content.get("tool").and_then(|v| v.as_str())
+                    ) {
+                        formatted.push_str(&format!(
+                            "[Step {}] Called: {}.{}\n",
+                            event.step_number, skill, tool
+                        ));
+
+                        if let Some(params) = event.content.get("parameters") {
+                            formatted.push_str(&format!("  Parameters: {}\n",
+                                serde_json::to_string(params).unwrap_or_default()
+                            ));
+                        }
+                    }
+                }
+                EventType::ToolResult => {
+                    if let (Some(skill), Some(tool)) = (
+                        event.content.get("skill").and_then(|v| v.as_str()),
+                        event.content.get("tool").and_then(|v| v.as_str())
+                    ) {
+                        let success = event.content.get("success")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+
+                        formatted.push_str(&format!(
+                            "[Step {}] Result: {}.{} -> {}\n",
+                            event.step_number, skill, tool,
+                            if success { "SUCCESS" } else { "FAILED" }
+                        ));
+
+                        if let Some(result) = event.content.get("result") {
+                            if let Some(stdout) = result.get("stdout").and_then(|v| v.as_str()) {
+                                if !stdout.is_empty() {
+                                    let truncated = if stdout.len() > 500 {
+                                        format!("{}... [truncated]", &stdout[..500])
+                                    } else {
+                                        stdout.to_string()
+                                    };
+                                    formatted.push_str(&format!("  Output:\n{}\n", truncated));
+                                }
+                            }
+                        }
+
+                        if let Some(error) = event.content.get("error").and_then(|v| v.as_str()) {
+                            if !error.is_empty() {
+                                formatted.push_str(&format!("  Error: {}\n", error));
+                            }
+                        }
+                    }
+                }
+                EventType::PhaseChange => {
+                    if let (Some(from), Some(to)) = (
+                        event.content.get("from_phase").and_then(|v| v.as_str()),
+                        event.content.get("to_phase").and_then(|v| v.as_str())
+                    ) {
+                        formatted.push_str(&format!(
+                            "[Step {}] Phase changed: {} -> {}\n",
+                            event.step_number, from, to
+                        ));
+                    }
+                }
+                _ => {
+                    formatted.push_str(&format!(
+                        "[{:?}] Step {}: {}\n",
+                        event.event_type,
+                        event.step_number,
+                        serde_json::to_string(&event.content).unwrap_or_default()
+                    ));
+                }
+            }
+            formatted.push('\n');
+        }
+
+        formatted
+    }
+
     /// 将 ArtifactType 映射到 BlockType
     fn artifact_type_to_block_type(
         &self,

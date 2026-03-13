@@ -225,32 +225,67 @@ impl ThreadExecutor {
         match intent.intent_type {
             IntentType::ToolCall => {
                 for tool_call in intent.tool_calls {
+                    let skill_name = tool_call.skill_name.clone();
+                    let tool_name = tool_call.tool_name.clone();
+                    let parameters = tool_call.parameters.clone();
+
                     let _ = self.event_tx.send(ExecutorEvent::SkillExecuting {
-                        skill_name: tool_call.skill_name.clone(),
-                        tool_name: tool_call.tool_name.clone(),
+                        skill_name: skill_name.clone(),
+                        tool_name: tool_name.clone(),
                     }).await;
-                    
-                    // 通过 Coordinator 执行 Skill
+
+                    let tool_call_event = Event::new(
+                        EventType::ToolCall,
+                        self.current_step,
+                        self.get_current_phase().await?,
+                        serde_json::json!({
+                            "skill": &skill_name,
+                            "tool": &tool_name,
+                            "parameters": &parameters,
+                        }),
+                    );
+                    self.storage.append_event(&tool_call_event).await?;
+
                     let result = self.execute_skill(tool_call).await?;
-                    
+
                     let _ = self.event_tx.send(ExecutorEvent::SkillCompleted {
                         success: result.success,
                         execution_time_ms: result.execution_time_ms,
                     }).await;
-                    
-                    // 记录事件
-                    let event = Event::new(
+
+                    let tool_result_event = Event::new(
                         EventType::ToolResult,
                         self.current_step,
                         self.get_current_phase().await?,
                         serde_json::json!({
-                            "skill": result.request_id,  // 使用 request_id 作为标识
+                            "skill": &skill_name,
+                            "tool": &tool_name,
                             "success": result.success,
-                            "result": result.result,
-                            "error": result.error,
+                            "result": &result.result,
+                            "error": &result.error,
                         }),
                     );
-                    self.storage.append_event(&event).await?;
+                    self.storage.append_event(&tool_result_event).await?;
+
+                    let artifact_content = serde_json::json!({
+                        "skill": &skill_name,
+                        "tool": &tool_name,
+                        "parameters": &parameters,
+                        "success": result.success,
+                        "result": &result.result,
+                        "error": &result.error,
+                        "execution_time_ms": result.execution_time_ms,
+                    });
+
+                    let artifact = crate::agent_thread::models::ArtifactSlot::new(
+                        crate::agent_thread::models::ArtifactType::Custom(
+                            format!("{}_{}", skill_name, tool_name)
+                        ),
+                        artifact_content,
+                        5,
+                        self.current_step,
+                    );
+                    self.storage.save_artifact(&artifact).await?;
                 }
             }
             IntentType::PhaseTransition => {

@@ -13,6 +13,7 @@ use tracing::{info, instrument, warn};
 use crate::auth::CapabilityLevel;
 use crate::coordinator::models::{SkillRequest, SkillResult};
 use crate::skills::BashSkill;
+use crate::skills::GatewaySkill;
 #[cfg(feature = "control-plane")]
 use crate::skills::{OSInterfaceSkill, SchedulerSkill};
 
@@ -22,6 +23,7 @@ use tokio::sync::RwLock;
 pub struct SkillRegistry {
     // 本地 Skills
     bash_skill: Arc<BashSkill>,
+    gateway_skill: Arc<GatewaySkill>,
     #[cfg(feature = "control-plane")]
     scheduler_skill: RwLock<Option<Arc<SchedulerSkill>>>,
     #[cfg(feature = "control-plane")]
@@ -30,9 +32,10 @@ pub struct SkillRegistry {
 
 impl SkillRegistry {
     /// 创建新的 Skill 注册表（基础 Skills）
-    pub fn new(bash_skill: Arc<BashSkill>) -> Self {
+    pub fn new(bash_skill: Arc<BashSkill>, gateway_skill: Arc<GatewaySkill>) -> Self {
         Self {
             bash_skill,
+            gateway_skill,
             #[cfg(feature = "control-plane")]
             scheduler_skill: RwLock::new(None),
             #[cfg(feature = "control-plane")]
@@ -173,6 +176,28 @@ impl SkillRegistry {
                     })
                 }
             }
+            "gateway" => {
+                if !caller_level.can_access(CapabilityLevel::Prime) {
+                    warn!(
+                        caller = %caller_level.name(),
+                        skill = "gateway",
+                        "Permission denied: Prime level required"
+                    );
+                    return Ok(SkillResult {
+                        request_id: request.request_id,
+                        success: false,
+                        result: None,
+                        error: Some("Permission denied: Prime level required for gateway skill".to_string()),
+                        execution_time_ms: 0,
+                    });
+                }
+                
+                self.gateway_skill.execute(
+                    &request.tool_name,
+                    request.parameters,
+                    request.context,
+                ).await
+            }
             _ => Ok(SkillResult {
                 request_id: request.request_id,
                 success: false,
@@ -192,7 +217,7 @@ impl SkillRegistry {
 
         #[cfg(feature = "control-plane")]
         {
-        let mut skills = vec!["bash"];
+        let mut skills = vec!["bash", "gateway"];
 
         let scheduler_guard = self.scheduler_skill.read().await;
         if scheduler_guard.is_some() {
@@ -212,6 +237,15 @@ impl SkillRegistry {
         match skill_name {
             "bash" => {
                 Some(self.bash_skill.list_tools().into_iter()
+                    .map(|t| serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters,
+                    }))
+                    .collect())
+            }
+            "gateway" => {
+                Some(self.gateway_skill.list_tools().into_iter()
                     .map(|t| serde_json::json!({
                         "name": t.name,
                         "description": t.description,

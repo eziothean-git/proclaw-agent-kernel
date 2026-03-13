@@ -41,18 +41,17 @@ impl PrimePersonalityService {
         }
     }
 
-    /// 发送 IR 结果回 Gateway
     async fn send_ir_to_gateway(
         &self,
         ir: IntermediateRepresentation,
     ) -> anyhow::Result<()> {
-        // 通过 AgenticOSInterface Skill 提交 IR
         let skill_request = crate::coordinator::models::SkillRequest {
             request_id: ir.request_id.clone(),
-            skill_name: "os_interface".to_string(),
-            tool_name: "submit_ir_result".to_string(),
+            skill_name: "gateway".to_string(),
+            tool_name: "send_ir_result".to_string(),
             parameters: serde_json::json!({
                 "ir": ir,
+                "request_id": ir.request_id,
             }),
             context: crate::coordinator::models::SkillContext {
                 thread_id: format!("prime_{}", ir.request_id),

@@ -87,6 +87,11 @@ async fn main() -> anyhow::Result<()> {
     let composer_server = ComposerServer::new(config.clone()).await?;
     let block_composer = composer_server.composer();
 
+    let gateway_skill = Arc::new(proclaw_block_composer::skills::GatewaySkill::new(
+        config.gateway.url.clone(),
+        config.gateway.auth_token.clone(),
+    ));
+
     // Create AgentKernel service
     let agent_kernel_config = AgentKernelConfig {
         data_path: data_path.clone(),
@@ -98,6 +103,7 @@ async fn main() -> anyhow::Result<()> {
     let agent_kernel_service = AgentKernelService::new(
         agent_kernel_config,
         block_composer.clone(),
+        gateway_skill,
     ).await?;
 
     // Get skill registry from AgentKernelService for PrimePersonality

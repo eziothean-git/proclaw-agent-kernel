@@ -136,6 +136,7 @@ impl AgentKernelService {
     pub async fn new(
         config: AgentKernelConfig,
         block_composer: Arc<BlockComposerEngine>,
+        gateway_skill: Arc<crate::skills::GatewaySkill>,
     ) -> anyhow::Result<Self> {
         info!("Initializing AgentKernel service");
         
@@ -175,7 +176,7 @@ impl AgentKernelService {
         let context_builder = Arc::new(ContextBuilder::new(block_composer.clone()));
         let output_parser = Arc::new(OutputParser::new());
 
-        let skill_registry = Arc::new(SkillRegistry::new(bash_skill));
+        let skill_registry = Arc::new(SkillRegistry::new(bash_skill, gateway_skill));
         let ticket_tracker = Arc::new(TicketTracker::new());
 
         let coordinator = Arc::new(ExecutionCoordinator::new(

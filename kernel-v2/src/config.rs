@@ -10,6 +10,7 @@ pub struct ComposerConfig {
     pub cache: CacheConfig,
     pub providers: ProvidersConfig,
     pub permissions: PermissionsConfig,
+    pub gateway: GatewayConfig,
     pub observability: ObservabilityConfig,
 }
 
@@ -94,6 +95,13 @@ pub struct PermissionsConfig {
     pub default_token_ttl_seconds: u64,
     pub default_max_calls: u32,
     pub policy_file: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GatewayConfig {
+    pub url: String,
+    pub auth_token: String,
+    pub webhook_path: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -193,6 +201,11 @@ impl ComposerConfig {
                 default_token_ttl_seconds: 3600,
                 default_max_calls: 100,
                 policy_file: PathBuf::from("/etc/proclaw/policies.yaml"),
+            },
+            gateway: GatewayConfig {
+                url: "http://localhost:3000".to_string(),
+                auth_token: "default-token-change-in-production".to_string(),
+                webhook_path: "/gateway/webhook/kernel-response".to_string(),
             },
             observability: ObservabilityConfig {
                 metrics: MetricsConfig {
