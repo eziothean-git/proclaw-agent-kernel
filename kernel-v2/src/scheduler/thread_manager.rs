@@ -246,14 +246,11 @@ impl ThreadManager {
         &self,
         thread_id: &ThreadId,
     ) -> anyhow::Result<()> {
-        if let Some(entry) = self.executors.get(thread_id) {
-            let handle = entry.value();
-            
+        if let Some(handle) = self.executors.get(thread_id).map(|entry| entry.state.clone()) {
             // 发送暂停信号（通过事件通道）
             // 注意：实际暂停逻辑在 Executor 内部处理
             // 这里只是记录状态
-            
-            let mut state = handle.state.write().await;
+            let mut state = handle.write().await;
             *state = crate::scheduler::thread_executor::ExecutorState::Paused;
             
             info!(thread_id = %thread_id.0, "Paused thread");
@@ -269,10 +266,8 @@ impl ThreadManager {
         &self,
         thread_id: &ThreadId,
     ) -> anyhow::Result<()> {
-        if let Some(entry) = self.executors.get(thread_id) {
-            let handle = entry.value();
-            
-            let mut state = handle.state.write().await;
+        if let Some(handle) = self.executors.get(thread_id).map(|entry| entry.state.clone()) {
+            let mut state = handle.write().await;
             *state = crate::scheduler::thread_executor::ExecutorState::Running;
             
             info!(thread_id = %thread_id.0, "Resumed thread");
@@ -303,15 +298,17 @@ impl ThreadManager {
     /// 列出所有运行中的 Threads
     pub async fn list_running_threads(&self) -> Vec<ThreadInfo> {
         let mut threads = Vec::new();
-        
-        for entry in self.executors.iter() {
-            let thread_id = entry.key();
-            let handle = entry.value();
-            
+
+        let executor_snapshots: Vec<(ThreadId, Arc<RwLock<ExecutorState>>)> = self.executors
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().state.clone()))
+            .collect();
+
+        for (thread_id, state_handle) in executor_snapshots {
             // 尝试从存储读取最新状态
-            if let Ok(storage) = ThreadStorage::load(&self.base_path, thread_id).await {
+            if let Ok(storage) = ThreadStorage::load(&self.base_path, &thread_id).await {
                 if let Ok(meta) = storage.read_meta().await {
-                    let state = handle.state.read().await;
+                    let state = state_handle.read().await;
                     let status = match *state {
                         crate::scheduler::thread_executor::ExecutorState::Paused => ThreadStatus::Paused,
                         crate::scheduler::thread_executor::ExecutorState::Running => ThreadStatus::Active,
@@ -321,7 +318,7 @@ impl ThreadManager {
                     };
                     
                     threads.push(ThreadInfo {
-                        thread_id: thread_id.clone(),
+                        thread_id,
                         session_id: meta.session_id.clone(),
                         status,
                         current_phase: meta.current_phase,
@@ -343,9 +340,9 @@ impl ThreadManager {
         let meta = storage.read_meta().await?;
         
         // 检查是否正在运行
-        let status = if let Some(entry) = self.executors.get(thread_id) {
-            let handle = entry.value();
-            let state = handle.state.read().await;
+        let state_handle = self.executors.get(thread_id).map(|entry| entry.state.clone());
+        let status = if let Some(state_handle) = state_handle {
+            let state = state_handle.read().await;
             match *state {
                 crate::scheduler::thread_executor::ExecutorState::Paused => ThreadStatus::Paused,
                 crate::scheduler::thread_executor::ExecutorState::Running => ThreadStatus::Active,

@@ -10,6 +10,7 @@ fn main() -> Result<()> {
             &[
                 "proto/block_composer.proto",
                 "proto/agent_kernel.proto",
+                "proto/prime_personality.proto",
             ],
             &["proto"],
         )?;

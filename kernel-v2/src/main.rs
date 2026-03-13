@@ -1,35 +1,17 @@
-//! ProClaw Agent Kernel - Main Entry Point
-//!
-//! 完整的 Agent Kernel v2，替代原有的 Python Kernel
-//! 提供服务：
-//! - BlockComposer: 上下文编译服务（gRPC）
-//! - AgentKernel: Agent 执行引擎（gRPC）
-
 use clap::Parser;
 use std::path::PathBuf;
-use std::sync::Arc;
 use tokio::net::UnixListener;
 use tokio_stream::wrappers::UnixListenerStream;
 use tonic::transport::Server;
 use tracing::{info, warn};
+use std::sync::Arc;
 
-mod agent_thread;
-mod block_composer;
-mod config;
-mod coordinator;
-mod llm;
-mod observability;
-mod providers;
-mod auth;
-mod scheduler;
-mod server;
-mod session;
-mod skills;
-
-use config::ComposerConfig;
-use server::{ComposerServer, agent_kernel::{AgentKernelService, AgentKernelConfig}};
-use server::agent_kernel::proto::agent_kernel_server::AgentKernelServer;
-use server::proto::block_composer_server::BlockComposerServer;
+use proclaw_block_composer::config::ComposerConfig;
+use proclaw_block_composer::server::{ComposerServer, agent_kernel::{AgentKernelService, AgentKernelConfig}, PrimePersonalityService};
+use proclaw_block_composer::server::agent_kernel::proto::agent_kernel_server::AgentKernelServer;
+use proclaw_block_composer::server::proto::block_composer_server::BlockComposerServer;
+use proclaw_block_composer::server::prime_personality_server::proto::prime_personality_server::PrimePersonalityServer;
+use proclaw_block_composer::personality::{PrimePersonality, PrimePersonalityConfig};
 
 /// ProClaw Agent Kernel v2
 #[derive(Parser, Debug)]
@@ -103,20 +85,36 @@ async fn main() -> anyhow::Result<()> {
 
     // Create BlockComposer service
     let composer_server = ComposerServer::new(config.clone()).await?;
-    let block_composer = composer_server.composer.clone();
+    let block_composer = composer_server.composer();
 
     // Create AgentKernel service
     let agent_kernel_config = AgentKernelConfig {
         data_path: data_path.clone(),
-        llm_base_url: args.llm_base_url,
-        llm_api_key: args.llm_api_key.unwrap_or_default(),
-        llm_model: args.llm_model,
+        llm_base_url: args.llm_base_url.clone(),
+        llm_api_key: args.llm_api_key.clone().unwrap_or_default(),
+        llm_model: args.llm_model.clone(),
     };
 
     let agent_kernel_service = AgentKernelService::new(
         agent_kernel_config,
-        block_composer,
+        block_composer.clone(),
     ).await?;
+
+    // Get skill registry from AgentKernelService for PrimePersonality
+    let skill_registry = agent_kernel_service.skill_registry();
+
+    // Create PrimePersonality service
+    let prime_config = PrimePersonalityConfig::default();
+    let prime_personality = Arc::new(PrimePersonality::new(
+        prime_config,
+        agent_kernel_service.llm_router(),
+        block_composer,
+    ));
+
+    let prime_personality_service = PrimePersonalityService::new(
+        prime_personality,
+        skill_registry,
+    );
 
     // Start background tasks
     agent_kernel_service.start_background_tasks().await;
@@ -129,7 +127,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // Setup Unix socket
+    // Setup Unix socket for internal services
     let socket_path = &config.server.socket_path;
     if let Some(parent) = socket_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -138,13 +136,26 @@ async fn main() -> anyhow::Result<()> {
         tokio::fs::remove_file(socket_path).await?;
     }
 
-    info!("Starting gRPC server on: {}", socket_path.display());
+    info!("Starting internal gRPC server on: {}", socket_path.display());
 
-    // Create Unix listener
+    // Create Unix listener for internal services
     let listener = UnixListener::bind(socket_path)?;
     let stream = UnixListenerStream::new(listener);
 
-    // Build and serve both services
+    // Start PrimePersonality TCP server in background (port 50051)
+    let prime_addr = "[::1]:50051".parse()?;
+    let prime_server = Server::builder()
+        .add_service(PrimePersonalityServer::new(prime_personality_service))
+        .serve(prime_addr);
+
+    tokio::spawn(async move {
+        info!("Prime Personality gRPC server starting on {}", prime_addr);
+        if let Err(e) = prime_server.await {
+            warn!("Prime Personality server error: {}", e);
+        }
+    });
+
+    // Build and serve internal services on Unix socket
     info!("Agent Kernel ready - serving BlockComposer and AgentKernel");
     
     Server::builder()

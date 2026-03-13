@@ -15,7 +15,6 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::{ReceiverStream, UnixListenerStream};
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::info;
-use uuid::Uuid;
 
 
 // Use the proto module from server
@@ -29,7 +28,7 @@ pub struct ComposerServer {
     pub(crate) composer: Arc<BlockComposerEngine>,
     bash_wrapper: Arc<BashWrapper>,
     auth_manager: Arc<AuthManager>,
-    metrics: Arc<MetricsCollector>,
+    _metrics: Arc<MetricsCollector>,
     tracer: Arc<TraceCollector>,
 }
 
@@ -66,9 +65,13 @@ impl ComposerServer {
             composer,
             bash_wrapper,
             auth_manager,
-            metrics,
+            _metrics: metrics,
             tracer,
         })
+    }
+
+    pub fn composer(&self) -> Arc<BlockComposerEngine> {
+        self.composer.clone()
     }
 
     /// Run the server

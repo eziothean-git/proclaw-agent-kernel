@@ -8,9 +8,8 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{error, info, instrument};
 
 use crate::agent_thread::{
     models::*,
@@ -54,16 +53,6 @@ pub struct ThreadExecutor {
     // 事件通道（向 Session Host 报告）
     event_tx: mpsc::Sender<ExecutorEvent>,
 }
-
-// SAFETY: All fields of ThreadExecutor are Send + Sync
-// - ExecutorId is String wrapper (Send + Sync)
-// - ThreadStorage is Send + Sync (PathBuf + ThreadId)
-// - Arc types are Send + Sync if contents are Send + Sync
-// - ExecutorState is Copy (Send + Sync)
-// - usize is Copy (Send + Sync)
-// - mpsc::Sender is Send + Sync
-unsafe impl Send for ThreadExecutor {}
-unsafe impl Sync for ThreadExecutor {}
 
 /// Executor 事件
 #[derive(Debug, Clone)]
@@ -464,4 +453,3 @@ pub struct PhaseTransitionIntent {
     pub reason: String,
     pub artifacts_to_finalize: Vec<String>,
 }
-

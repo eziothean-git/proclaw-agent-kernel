@@ -1,9 +1,7 @@
 //! Memory provider - long-term memory access (simplified)
 
 use crate::config::MemoryProviderConfig;
-use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 

@@ -1,6 +1,5 @@
 //! Agent Thread 文件存储实现
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -14,20 +13,14 @@ use super::{
 
 /// Thread 文件存储路径结构
 /// 
-/// ```
+/// Directory layout:
 /// /data/threads/{thread_id}/
-/// ├── meta.json              # Thread 元数据
-/// ├── immutable_input.json   # 不可变输入
-/// ├── event_log.jsonl        # JSON Lines 格式的事件日志
-/// ├── artifacts/             # 结构化产物
-/// │   ├── module_map.json
-/// │   ├── patch_plan.json
-/// │   └── ...
-/// ├── snapshots/             # 执行快照
-/// │   └── {timestamp}.json
-/// └── index/                 # 索引（可选）
-///     └── event_index.json
-/// ```
+///   - meta.json              # Thread metadata
+///   - immutable_input.json   # Immutable input
+///   - event_log.jsonl        # Event log (JSON Lines)
+///   - artifacts/             # Structured artifacts
+///   - snapshots/             # Execution snapshots
+///   - index/                 # Optional indexes
 const THREADS_DIR: &str = "threads";
 const META_FILE: &str = "meta.json";
 const IMMUTABLE_INPUT_FILE: &str = "immutable_input.json";
@@ -395,6 +388,7 @@ impl ThreadStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use tempfile::TempDir;
     
     #[tokio::test]

@@ -6,10 +6,12 @@
 
 pub mod agent_kernel;
 pub mod composer_server;
+pub mod prime_personality_server;
 
 pub use agent_kernel::{
     AgentKernelService, AgentKernelConfig, proto as agent_proto,
 };
+pub use prime_personality_server::PrimePersonalityService;
 
 // Include generated proto code
 pub mod proto {

@@ -8,10 +8,10 @@
 //! - query_status: 查询状态
 
 pub mod context_builder;
-pub mod executor_pool;
 pub mod output_parser;
 pub mod scheduler;
 pub mod thread_executor;
+#[cfg(feature = "control-plane")]
 pub mod thread_manager;
 
 pub use context_builder::{ContextBuilder, WorkingSet};

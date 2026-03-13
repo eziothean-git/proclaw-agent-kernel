@@ -2,10 +2,8 @@
 //! 
 //! 系统级资源协调层，跨线程、跨进程、跨 Session
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use dashmap::DashMap;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -25,7 +23,7 @@ pub struct ExecutionCoordinator {
     skill_registry: Arc<SkillRegistry>,
     
     // Ticket 追踪
-    ticket_tracker: Arc<TicketTracker>,
+    _ticket_tracker: Arc<TicketTracker>,
     
     // 执行统计
     stats: Arc<RwLock<CoordinatorStats>>,
@@ -50,12 +48,12 @@ impl ExecutionCoordinator {
         Self {
             lock_manager,
             skill_registry,
-            ticket_tracker,
+            _ticket_tracker: ticket_tracker,
             stats: Arc::new(RwLock::new(CoordinatorStats::default())),
         }
     }
     
-    /// 执行 Skill（带资源锁定）
+    /// 执行 Agent 可直接调用的 Skill（带资源锁定）
     #[instrument(skip(self, request), fields(executor_id = %request.context.executor_id, skill = %request.skill_name))]
     pub async fn execute_skill(
         &self,
@@ -89,7 +87,7 @@ impl ExecutionCoordinator {
         
         // 3. 通过 SkillRegistry 执行 Skill
         debug!(skill = %request.skill_name, "Executing via skill registry");
-        let result = self.skill_registry.execute(request.clone()).await;
+        let result = self.skill_registry.execute_agent(request.clone()).await;
         
         // 4. 释放锁
         for lock in locks {
@@ -182,11 +180,9 @@ impl ExecutionCoordinator {
     ) -> CoordinatorStats {
         self.stats.read().await.clone()
     }
-}
 
-/// 路由决策（保留供将来使用）
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RouteDecision {
-    Local,
-    Remote,
+    /// 获取 LockManager 引用
+    pub fn lock_manager(&self) -> &DirectoryLockManager {
+        &self.lock_manager
+    }
 }

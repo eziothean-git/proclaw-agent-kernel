@@ -12,21 +12,26 @@ use tonic::{Request, Response, Status};
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::agent_thread::{
-    models::{ThreadId, ThreadMeta, ThreadStatus, SessionId, ImmutableInput, Event as ModelsEvent, ExecutorId},
+    models::{ThreadId, ThreadStatus, SessionId, ImmutableInput, ExecutorId},
     storage::ThreadStorage,
 };
 use crate::block_composer::BlockComposerEngine;
 use crate::coordinator::{
-    ExecutionCoordinator, CoordinatorStats,
+    ExecutionCoordinator,
     lock_manager::DirectoryLockManager,
     skill_registry::SkillRegistry,
     ticket::TicketTracker,
 };
-use crate::skills::BashSkill;
+use crate::skills::{BashSkill, ComposerSkill};
 use crate::llm::{LLMRouter, config::LLMRouterConfig};
 use crate::scheduler::{
     ContextBuilder, OutputParser, ThreadExecutor, ExecutorState, ExecutorEvent as SchedulerExecutorEvent,
+    thread_manager::ThreadManager,
 };
+use crate::session::{process::ProcessManager, SessionHostSkills};
+use crate::personality::{PrimePersonality, PrimePersonalityConfig};
+#[cfg(feature = "control-plane")]
+use crate::skills::{OSInterfaceSkill, SchedulerSkill};
 
 // Include generated proto code
 pub mod proto {
@@ -60,21 +65,31 @@ use proto::{
 pub struct AgentKernelService {
     // 配置
     config: AgentKernelConfig,
-    
+
     // 基础设施
     coordinator: Arc<ExecutionCoordinator>,
     lock_manager: Arc<DirectoryLockManager>,
     block_composer: Arc<BlockComposerEngine>,
     llm_router: Arc<LLMRouter>,
-    
+
     // 组件
     context_builder: Arc<ContextBuilder>,
     output_parser: Arc<OutputParser>,
-    
+
+    #[cfg(feature = "control-plane")]
+    thread_manager: Arc<ThreadManager>,
+    #[cfg(feature = "control-plane")]
+    session_host: Arc<SessionHostSkills>,
+
+    // Skill Registry
+    skill_registry: Arc<SkillRegistry>,
+
+    prime_personality: Arc<PrimePersonality>,
+
     // 运行时状态
     threads: Arc<RwLock<HashMap<String, ThreadHandle>>>,
     executors: Arc<RwLock<HashMap<String, ExecutorHandle>>>,
-    
+
     // 启动时间
     start_time: Instant,
 }
@@ -103,7 +118,7 @@ impl Default for AgentKernelConfig {
 #[derive(Debug)]
 struct ThreadHandle {
     storage: ThreadStorage,
-    created_at: std::time::Instant,
+    _created_at: std::time::Instant,
 }
 
 /// Executor 句柄
@@ -112,7 +127,7 @@ struct ExecutorHandle {
     executor_id: String,
     thread_id: String,
     state: ExecutorState,
-    event_tx: mpsc::Sender<SchedulerExecutorEvent>,
+    _event_tx: mpsc::Sender<SchedulerExecutorEvent>,
     task_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -129,7 +144,14 @@ impl AgentKernelService {
         tokio::fs::create_dir_all(&threads_path).await?;
         
         // 初始化 LLM Router
-        let llm_config = LLMRouterConfig::from_env();
+        let mut llm_config = LLMRouterConfig::from_env();
+        if !config.llm_api_key.is_empty() {
+            let mut provider = crate::llm::config::ProviderConfig::openai(config.llm_api_key.clone());
+            provider.base_url = config.llm_base_url.clone();
+            provider.default_model = config.llm_model.clone();
+            llm_config.providers.insert("openai".to_string(), provider);
+            llm_config.default_provider = "openai".to_string();
+        }
         let llm_router = Arc::new(LLMRouter::new(llm_config));
         info!("LLM Router initialized with multiple providers");
         
@@ -141,32 +163,68 @@ impl AgentKernelService {
         // 创建 Bash Skill
         let bash_config = crate::providers::bash::BashWrapperConfig {
             timeout_seconds: 60,
-            max_output_size: 10 * 1024 * 1024,  // 10MB
+            max_output_size: 10 * 1024 * 1024,
             blocked_commands: vec!["rm -rf /".to_string(), ":(){ :|:& };:".to_string()],
             custom_patterns: vec![],
         };
         let bash_skill = Arc::new(BashSkill::new(
             std::sync::Arc::new(crate::providers::bash::BashWrapper::new(bash_config))
         ));
-        
-        // 创建 Skill Registry
+
+        // 初始化 Context Builder 和 Output Parser
+        let context_builder = Arc::new(ContextBuilder::new(block_composer.clone()));
+        let output_parser = Arc::new(OutputParser::new());
+
         let skill_registry = Arc::new(SkillRegistry::new(bash_skill));
         let ticket_tracker = Arc::new(TicketTracker::new());
-        
+
         let coordinator = Arc::new(ExecutionCoordinator::new(
             lock_manager.clone(),
-            skill_registry,
+            skill_registry.clone(),
             ticket_tracker,
         ));
-        
-        // 初始化 Context Builder
-        let context_builder = Arc::new(ContextBuilder::new(block_composer.clone()));
-        
-        // 初始化 Output Parser
-        let output_parser = Arc::new(OutputParser::new());
-        
+
+        let prime_config = PrimePersonalityConfig::default();
+        let prime_personality = Arc::new(PrimePersonality::new(
+            prime_config,
+            llm_router.clone(),
+            block_composer.clone(),
+        ));
+
+        #[cfg(feature = "control-plane")]
+        let (thread_manager, session_host) = {
+            let tm = Arc::new(ThreadManager::new(
+                config.data_path.join("threads"),
+                coordinator.clone(),
+                llm_router.clone(),
+                context_builder.clone(),
+                output_parser.clone(),
+            ));
+
+            let pm = Arc::new(
+                ProcessManager::new(config.data_path.join("processes")).await?
+            );
+
+            let scheduler_skill = Arc::new(SchedulerSkill::new(tm.clone()));
+            let os_interface_skill = Arc::new(OSInterfaceSkill::new(
+                pm.clone(),
+                tm.clone(),
+            ));
+
+            skill_registry.register_scheduler_skill(scheduler_skill).await;
+            skill_registry.register_os_interface_skill(os_interface_skill).await;
+
+            let sh = Arc::new(SessionHostSkills::new(
+                config.data_path.clone(),
+                coordinator.clone(),
+                block_composer.clone(),
+            ).await?);
+
+            (tm, sh)
+        };
+
         info!("AgentKernel service initialized");
-        
+
         Ok(Self {
             config,
             coordinator,
@@ -175,6 +233,12 @@ impl AgentKernelService {
             llm_router,
             context_builder,
             output_parser,
+            #[cfg(feature = "control-plane")]
+            thread_manager,
+            #[cfg(feature = "control-plane")]
+            session_host,
+            skill_registry,
+            prime_personality,
             threads: Arc::new(RwLock::new(HashMap::new())),
             executors: Arc::new(RwLock::new(HashMap::new())),
             start_time: Instant::now(),
@@ -243,7 +307,7 @@ impl AgentKernel for AgentKernelService {
                 
                 let handle = ThreadHandle {
                     storage,
-                    created_at: Instant::now(),
+                    _created_at: Instant::now(),
                 };
                 
                 self.threads.write().await.insert(thread_id_str.clone(), handle);
@@ -278,7 +342,7 @@ impl AgentKernel for AgentKernelService {
         info!(thread_id = %req.thread_id, "Spawning executor");
         
         // 检查 Thread 是否存在
-        let storage = match ThreadStorage::load(&self.config.data_path, &thread_id).await {
+        let _storage = match ThreadStorage::load(&self.config.data_path, &thread_id).await {
             Ok(s) => s,
             Err(e) => {
                 return Ok(Response::new(SpawnExecutorResponse {
@@ -305,7 +369,7 @@ impl AgentKernel for AgentKernelService {
         // 创建 Executor
         let executor_id = ExecutorId::new();
         let executor_id_str = executor_id.0.clone();
-        let (event_tx, mut event_rx) = mpsc::channel(100);
+        let (event_tx, _event_rx) = mpsc::channel(100);
         let event_tx_clone = event_tx.clone();
         
         let executor = match ThreadExecutor::new(
@@ -328,7 +392,7 @@ impl AgentKernel for AgentKernelService {
         };
         
         // 启动执行
-        let max_steps = if req.max_steps > 0 { req.max_steps as usize } else { 100 };
+        let _max_steps = if req.max_steps > 0 { req.max_steps as usize } else { 100 };
         let executor_id_str_clone = executor_id_str.clone();
         let task_handle = tokio::spawn(async move {
             match executor.run().await {
@@ -354,7 +418,7 @@ impl AgentKernel for AgentKernelService {
             executor_id: executor_id_str.clone(),
             thread_id: req.thread_id.clone(),
             state: ExecutorState::Running,
-            event_tx: event_tx_clone,
+            _event_tx: event_tx_clone,
             task_handle: Some(task_handle),
         };
         
@@ -693,17 +757,39 @@ impl AgentKernel for AgentKernelService {
         request: Request<GetResourceStatusRequest>,
     ) -> Result<Response<GetResourceStatusResponse>, Status> {
         let req = request.into_inner();
-        
-        // 简化实现：返回所有请求的目录状态
-        let locks: Vec<_> = req.directory_paths.into_iter()
-            .map(|path| proto::get_resource_status_response::DirectoryLockStatus {
-                directory_path: path,
-                is_locked: false,  // TODO: 查询实际锁状态
-                holder_executor_id: String::new(),
-                queue_length: 0,
-            })
-            .collect();
-        
+        let mut locks = Vec::new();
+
+        for path_str in req.directory_paths {
+            let path = PathBuf::from(&path_str);
+            match self.lock_manager.query_lock_status(&path).await {
+                Ok(Some(status)) => {
+                    locks.push(proto::get_resource_status_response::DirectoryLockStatus {
+                        directory_path: path_str,
+                        is_locked: status.is_locked,
+                        holder_executor_id: status.holder_executor_id,
+                        queue_length: status.queue_length as i32,
+                    });
+                }
+                Ok(None) => {
+                    locks.push(proto::get_resource_status_response::DirectoryLockStatus {
+                        directory_path: path_str,
+                        is_locked: false,
+                        holder_executor_id: String::new(),
+                        queue_length: 0,
+                    });
+                }
+                Err(e) => {
+                    warn!(error = %e, path = %path_str, "Failed to query lock status");
+                    locks.push(proto::get_resource_status_response::DirectoryLockStatus {
+                        directory_path: path_str,
+                        is_locked: false,
+                        holder_executor_id: String::new(),
+                        queue_length: -1, // Error indicator
+                    });
+                }
+            }
+        }
+
         Ok(Response::new(GetResourceStatusResponse { locks }))
     }
     
@@ -783,5 +869,15 @@ impl AgentKernel for AgentKernelService {
             success: true,
             message: format!("AgentKernel shutdown completed (timeout: {}s)", timeout),
         }))
+    }
+}
+
+impl AgentKernelService {
+    pub fn skill_registry(&self) -> Arc<SkillRegistry> {
+        Arc::clone(&self.skill_registry)
+    }
+
+    pub fn llm_router(&self) -> Arc<LLMRouter> {
+        Arc::clone(&self.llm_router)
     }
 }

@@ -101,6 +101,7 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 [features]
 default = ["reqwest", "systemd"]
 systemd = ["dep:sd-notify"]
+control-plane = []
 
 [profile.release]
 opt-level = 3

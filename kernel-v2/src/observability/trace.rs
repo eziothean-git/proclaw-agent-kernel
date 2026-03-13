@@ -491,7 +491,7 @@ impl TraceCollector {
         let index = self.index.lock().await;
         let mut records = Vec::new();
 
-        for (id, path) in index.iter() {
+        for (_id, path) in index.iter() {
             if records.len() >= limit {
                 break;
             }

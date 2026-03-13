@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::agent_thread::{
-    models::{ArtifactSlot, Event, EventType, ExecutionPhase, ImmutableInput, ThreadMeta},
+    models::{ArtifactSlot, Event, ExecutionPhase, ImmutableInput, ThreadMeta},
     storage::ThreadStorage,
 };
 use crate::block_composer::BlockComposerEngine;
@@ -66,7 +66,7 @@ impl ContextBuilder {
     
     /// 根据 Phase 选择 Profile
     fn profile_for_phase(&self,
-        phase: ExecutionPhase,
+        _phase: ExecutionPhase,
     ) -> Profile {
         // 所有 Phase 都使用 Task Profile，但 block 顺序不同
         Profile::Task
@@ -177,10 +177,10 @@ impl ContextBuilder {
             let constraints_text = immutable_input.constraints.join("\n");
             blocks.push(Block {
                 block_id: format!("constraints_{}", step_number),
-                block_type: BlockType::WorkingMemory as i32,
-                content: format!("## Constraints\n{}", constraints_text),
-                metadata: vec![],
-                priority: 70,
+            block_type: BlockType::WorkingMemory as i32,
+            content: format!("## Constraints\n{}", constraints_text),
+            metadata: serde_json::to_vec(&serde_json::json!({}))?,
+            priority: 70,
                 token_count: (constraints_text.len() / 4) as u32,
                 dependencies: vec![],
                 content_hash: Self::compute_hash(&constraints_text),

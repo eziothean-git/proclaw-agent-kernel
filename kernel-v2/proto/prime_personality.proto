@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package primepersonality;
+
+import "google/protobuf/timestamp.proto";
+
+// Prime Personality Service
+// 处理 Gateway 传入的请求，生成 Intermediate Representation
+service PrimePersonality {
+  // 处理请求
+  rpc ProcessRequest (ProcessRequestRequest) returns (ProcessRequestResponse);
+  
+  // 健康检查
+  rpc HealthCheck (HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// 处理状态
+enum ProcessingStatus {
+  PENDING = 0;
+  PROCESSING = 1;
+  COMPLETED = 2;
+  FAILED = 3;
+  CANCELLED = 4;
+}
+
+// 对话历史中的单轮记录
+message ConversationTurn {
+  string turn_id = 1;
+  string timestamp = 2;
+  string role = 3;  // "user" | "assistant"
+  string content = 4;
+  string platform_message_id = 5;
+}
+
+// 对话上下文
+message ConversationContext {
+  string session_id = 1;
+  repeated ConversationTurn conversation_history = 2;
+  int32 window_size = 3;
+  string full_context_path = 4;
+  int32 total_turns = 5;
+}
+
+// 输入消息头部
+message InputHeader {
+  string timestamp = 1;
+  string platform = 2;
+  string device_id = 3;
+  string user_id = 4;
+  string session_id = 5;
+  string request_id = 6;
+  string source_ip = 7;
+  string client_version = 8;
+  int32 priority = 9;
+}
+
+// 附件元数据
+message AttachmentMetadata {
+  int32 index = 1;
+  string original_name = 2;
+  string mime_type = 3;
+  string local_path = 4;
+}
+
+// 输入元数据
+message InputMetadata {
+  repeated AttachmentMetadata attachments = 1;
+  repeated string tags = 2;
+}
+
+// 输入消息（Gateway 传入）
+message InputMessage {
+  InputHeader header = 1;
+  string body = 2;
+  InputMetadata metadata = 3;
+  ConversationContext context = 4;
+}
+
+// Process Definition（IR 中的进程定义）
+message ProcessDefinition {
+  string name = 1;
+  string goal = 2;
+  repeated string capabilities = 3;
+  repeated string forbidden_capabilities = 4;
+  repeated string constraints = 5;
+  string security_level = 6;  // "low" | "medium" | "high"
+  repeated string dependencies = 7;
+}
+
+// Intermediate Representation（Prime Personality 输出）
+message IntermediateRepresentation {
+  string request_id = 1;
+  string intent = 2;
+  repeated string goals = 3;
+  repeated ProcessDefinition processes = 4;
+  map<string, string> context_hints = 5;
+}
+
+// 处理请求
+message ProcessRequestRequest {
+  InputMessage input_message = 1;
+}
+
+message ProcessRequestResponse {
+  string request_id = 1;
+  ProcessingStatus status = 2;
+  IntermediateRepresentation ir = 3;
+  
+  // 错误信息（失败时）
+  string error_message = 4;
+}
+
+// 健康检查
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string version = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}

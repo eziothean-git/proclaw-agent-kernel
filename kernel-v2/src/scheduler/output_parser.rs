@@ -5,7 +5,6 @@
 //! - YAML 格式解析  
 //! - 启发式解析（fallback）
 
-use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use crate::agent_thread::models::ExecutionPhase;
@@ -149,7 +148,7 @@ impl OutputParser {
     fn parse_heuristic(
         &self,
         output: &str,
-        current_phase: ExecutionPhase,
+        _current_phase: ExecutionPhase,
     ) -> anyhow::Result<ParsedIntent> {
         let output_lower = output.to_lowercase();
         

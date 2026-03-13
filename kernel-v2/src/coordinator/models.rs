@@ -2,7 +2,6 @@
 
 use crate::auth::CapabilityLevel;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Skill 请求
 #[derive(Debug, Clone, Serialize, Deserialize)]

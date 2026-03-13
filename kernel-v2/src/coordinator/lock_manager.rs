@@ -15,9 +15,9 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};
 use tokio::sync::{broadcast, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{info, warn};
 
-use crate::agent_thread::{ThreadId, ExecutorId, SessionId};
+use crate::agent_thread::{ExecutorId, SessionId};
 
 /// 锁级别
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,15 +35,6 @@ pub struct DirectoryLock {
     pub acquired_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
     pub level: LockLevel,
-}
-
-/// 等待队列条目
-#[derive(Debug, Clone)]
-struct QueueEntry {
-    executor_id: ExecutorId,
-    session_id: SessionId,
-    enqueued_at: DateTime<Utc>,
-    timeout_seconds: u64,
 }
 
 /// 目录锁管理器
@@ -455,6 +446,94 @@ impl DirectoryLockManager {
         
         Ok(count)
     }
+
+    /// 查询目录的锁状态
+    pub async fn query_lock_status(
+        &self,
+        directory: &Path,
+    ) -> anyhow::Result<Option<LockStatus>> {
+        let conn = Connection::open(&self.db_path)?;
+        let path_str = directory.to_str().unwrap();
+
+        // 查询活跃锁
+        let active_lock: Option<(String, String)> = conn.query_row(
+            "SELECT holder_executor_id, lock_level FROM active_locks WHERE directory_path = ?",
+            [path_str],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        ).ok();
+
+        // 查询等待队列长度
+        let queue_length: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM lock_queue WHERE directory_path = ? AND status = 'waiting'",
+            [path_str],
+            |row| row.get(0),
+        ).unwrap_or(0);
+
+        match active_lock {
+            Some((holder_id, level_str)) => {
+                let level = if level_str == "write" { LockLevel::Write } else { LockLevel::Read };
+                Ok(Some(LockStatus {
+                    directory: directory.to_path_buf(),
+                    is_locked: true,
+                    holder_executor_id: holder_id,
+                    lock_level: level,
+                    queue_length: queue_length as usize,
+                }))
+            }
+            None => Ok(Some(LockStatus {
+                directory: directory.to_path_buf(),
+                is_locked: false,
+                holder_executor_id: String::new(),
+                lock_level: LockLevel::Read,
+                queue_length: queue_length as usize,
+            })),
+        }
+    }
+
+    /// 列出所有活跃锁
+    pub async fn list_active_locks(&self) -> anyhow::Result<Vec<LockStatus>> {
+        let conn = Connection::open(&self.db_path)?;
+
+        let locks: Vec<(String, String, String)> = conn.prepare(
+            "SELECT directory_path, holder_executor_id, lock_level FROM active_locks"
+        )?.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?.collect::<Result<_, _>>()?;
+
+        let mut result = Vec::new();
+        for (path_str, holder_id, level_str) in locks {
+            let queue_length: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM lock_queue WHERE directory_path = ? AND status = 'waiting'",
+                [&path_str],
+                |row| row.get(0),
+            ).unwrap_or(0);
+
+            let level = if level_str == "write" { LockLevel::Write } else { LockLevel::Read };
+            result.push(LockStatus {
+                directory: PathBuf::from(path_str),
+                is_locked: true,
+                holder_executor_id: holder_id,
+                lock_level: level,
+                queue_length: queue_length as usize,
+            });
+        }
+
+        Ok(result)
+    }
+}
+
+/// 锁状态信息
+#[derive(Debug, Clone)]
+pub struct LockStatus {
+    pub directory: PathBuf,
+    pub is_locked: bool,
+    pub holder_executor_id: String,
+    pub lock_level: LockLevel,
+    pub queue_length: usize,
 }
 
 #[cfg(test)]

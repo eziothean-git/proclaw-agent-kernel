@@ -3,7 +3,6 @@
 //! 支持多 Provider 配置，根据任务难度自动选择模型
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 /// Provider 类型

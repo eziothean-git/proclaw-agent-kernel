@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Cache key for block lookup
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]

@@ -2,7 +2,6 @@
 //! 
 //! 通过 BashWrapper 执行系统命令
 
-use async_trait::async_trait;
 use serde_json::json;
 use tracing::{debug, error, info, instrument};
 

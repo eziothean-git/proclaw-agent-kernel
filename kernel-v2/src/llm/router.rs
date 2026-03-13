@@ -5,11 +5,9 @@
 //! - 异步提交 LLM 请求
 //! - 收集完整响应后回调给调用者
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use dashmap::DashMap;
-use tokio::sync::{mpsc, oneshot};
 use tokio::time::timeout;
 use tracing::{debug, error, info, instrument, warn};
 use uuid::Uuid;
@@ -17,7 +15,7 @@ use uuid::Uuid;
 use super::{
     client::{LLMClient, SimpleLLMClient, MockLLMClient},
     config::{LLMRouterConfig, LLMRequestConfig, ProviderType, DifficultyLevel},
-    models::{LLMRequest, Message},
+    models::Message,
 };
 
 /// 请求 ID
@@ -34,17 +32,6 @@ impl Default for RequestId {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// LLM 请求任务
-#[derive(Debug)]
-struct LLMTask {
-    request_id: RequestId,
-    provider_name: String,
-    model: String,
-    prompt: String,
-    config: LLMRequestConfig,
-    response_tx: oneshot::Sender<Result<String, LLMError>>,
 }
 
 /// LLM 错误类型
@@ -83,7 +70,6 @@ pub struct LLMRouter {
 
 #[derive(Debug)]
 struct PendingRequest {
-    submitted_at: std::time::Instant,
     config: LLMRequestConfig,
 }
 
@@ -169,7 +155,6 @@ impl LLMRouter {
         self.pending_requests.insert(
             request_id.clone(),
             PendingRequest {
-                submitted_at: std::time::Instant::now(),
                 config: config.clone(),
             }
         );
@@ -207,14 +192,13 @@ impl LLMRouter {
             .ok_or_else(|| LLMError::InvalidResponse("Request not found".to_string()))?;
         
         let config = pending.config.clone();
-        let submitted_at = pending.submitted_at;
         drop(pending);
         
         // 获取客户端
-        let (provider_name, model) = self.config.select_provider_and_model(&config)
+        let (provider_name, _model) = self.config.select_provider_and_model(&config)
             .ok_or_else(|| LLMError::AllProvidersFailed)?;
         
-        let client = self.get_client(&provider_name)?;
+        let _client = self.get_client(&provider_name)?;
         
         // 这里需要重新获取 prompt，这是一个设计问题
         // 更好的设计是：submit_request 返回的是一个 handle，包含所有信息
@@ -225,7 +209,7 @@ impl LLMRouter {
         
         // 由于架构限制，我们需要重新设计
         // 临时方案：直接执行（同步）
-        let messages = vec![
+        let _messages = vec![
             Message {
                 role: "system".to_string(),
                 content: "You are an Agent Thread in an Agent Kernel system.".to_string(),
@@ -323,7 +307,7 @@ impl LLMRouter {
     async fn execute_with_timeout(
         client: Arc<dyn LLMClient>,
         prompt: String,
-        model: String,
+        _model: String,
         _config: LLMRequestConfig,
         timeout_seconds: u64,
     ) -> Result<String, LLMError> {
