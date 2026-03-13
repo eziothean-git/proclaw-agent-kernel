@@ -3,10 +3,12 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntermediateRepresentation {
+    #[serde(default)]
     pub request_id: String,
     pub intent: String,
     pub goals: Vec<String>,
     pub processes: Vec<ProcessDefinition>,
+    #[serde(default)]
     pub context_hints: HashMap<String, serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<Content>,

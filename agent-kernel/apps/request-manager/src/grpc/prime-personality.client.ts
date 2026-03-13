@@ -64,44 +64,40 @@ export class PrimePersonalityClient implements OnModuleInit {
       throw new Error('gRPC client not initialized');
     }
 
-    // Validate timeoutMs to prevent "Invalid time value" error
     const validTimeoutMs = typeof timeoutMs === 'number' && !isNaN(timeoutMs) && timeoutMs > 0
       ? timeoutMs
-      : 120000; // Default 2 minutes
-
-    const deadline = new Date(Date.now() + validTimeoutMs);
-
-    // Validate deadline is a valid date
-    if (isNaN(deadline.getTime())) {
-      this.logger.error(`Invalid deadline calculated: timeoutMs=${timeoutMs}, now=${Date.now()}`);
-      throw new Error('Invalid deadline: unable to calculate valid timeout');
-    }
-
-    // Convert Date to protobuf Timestamp format
-    const deadlineSeconds = Math.floor(deadline.getTime() / 1000);
-    const deadlineNanos = (deadline.getTime() % 1000) * 1000000;
+      : 120000;
 
     const request = {
-      requestId: task.requestId,
-      sessionId: task.sessionId,
-      userId: task.userId,
-      priority: task.priority,
-      body: task.body,
-      context: {
-        taskGoal: task.body.substring(0, 100),
-        constraints: [],
-        allowedCapabilities: [],
-        workingMemory: Buffer.from(''),
-        contextMetadata: task.metadata,
-      },
-      metadata: task.metadata,
-      timeoutMs: validTimeoutMs,
-      deadline: {
-        seconds: deadlineSeconds.toString(),
-        nanos: deadlineNanos,
+      inputMessage: {
+        header: {
+          timestamp: new Date().toISOString(),
+          platform: 'request-manager',
+          deviceId: '',
+          userId: task.userId,
+          sessionId: task.sessionId,
+          requestId: task.requestId,
+          sourceIp: '',
+          clientVersion: '1.0.0',
+          priority: task.priority,
+        },
+        body: task.body,
+        metadata: {
+          attachments: [],
+          tags: [],
+        },
+        context: {
+          sessionId: task.sessionId,
+          conversationHistory: [],
+          windowSize: 10,
+          fullContextPath: '',
+          totalTurns: 0,
+        },
       },
     };
 
+    this.logger.log(`Sending gRPC request to Prime: requestId=${task.requestId}`);
+    
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error(`Prime Personality timeout after ${timeoutMs}ms`));
@@ -116,26 +112,27 @@ export class PrimePersonalityClient implements OnModuleInit {
         } else {
           if (response.status === 3) { // FAILED
             const error = new Error(response.errorMessage || 'Processing failed');
-            (error as any).category = response.errorCategory;
-            (error as any).recoverable = response.recoverable;
             reject(error);
           } else {
+            const ir = response.ir;
+            const contentText = ir?.content?.text || '';
+            
             resolve({
-              content: response.resultContent,
-              actions: response.actions?.map((a: any) => ({
-                type: a.type,
-                skill: a.skill,
-                tool: a.tool,
-                status: a.status,
-                durationMs: a.durationMs,
-                result: a.result,
+              content: contentText,
+              actions: ir?.processes?.map((p: any) => ({
+                type: 'process',
+                skill: p.name,
+                tool: p.capabilities?.[0] || '',
+                status: 'completed',
+                durationMs: 0,
+                result: { goal: p.goal },
               })) || [],
               metrics: {
-                totalDurationMs: response.metrics?.totalDurationMs,
-                tokenCountInput: response.metrics?.tokenCountInput,
-                tokenCountOutput: response.metrics?.tokenCountOutput,
-                modelVersion: response.metrics?.modelVersion,
-                llmCallsCount: response.metrics?.llmCallsCount,
+                totalDurationMs: 0,
+                tokenCountInput: 0,
+                tokenCountOutput: 0,
+                modelVersion: '',
+                llmCallsCount: 0,
               },
             });
           }

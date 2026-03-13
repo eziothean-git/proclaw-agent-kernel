@@ -493,6 +493,11 @@ mod tests {
                 default_max_calls: 100,
                 policy_file: temp_dir.join("policies.yaml"),
             },
+            gateway: crate::config::GatewayConfig {
+                url: "http://localhost:3000".to_string(),
+                auth_token: "test-token".to_string(),
+                webhook_path: "/gateway/webhook/kernel-response".to_string(),
+            },
             observability: crate::config::ObservabilityConfig {
                 metrics: crate::config::MetricsConfig {
                     enabled: false,

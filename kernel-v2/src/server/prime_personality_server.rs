@@ -86,6 +86,9 @@ impl PrimePersonality for PrimePersonalityService {
     ) -> Result<Response<ProcessRequestResponse>, Status> {
         let req = request.into_inner();
 
+        info!("Received ProcessRequest: input_message is {}", 
+            if req.input_message.is_some() { "Some" } else { "None" });
+
         // 转换 Proto 消息到内部类型
         let input = match req.input_message {
             Some(proto_input) => convert_proto_to_input(proto_input),

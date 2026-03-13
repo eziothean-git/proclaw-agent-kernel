@@ -246,7 +246,62 @@ test_system() {
     fi
 }
 
-# Main command handler
+kill_all() {
+    log "Force killing all services..."
+    
+    pkill -9 -f "proclaw-composer" 2>/dev/null || true
+    pkill -9 -f "node dist/main" 2>/dev/null || true
+    pkill -9 -f "request-manager" 2>/dev/null || true
+    
+    for port in 3000 50051 50052; do
+        pid=$(lsof -Pi :$port -sTCP:LISTEN -t 2>/dev/null || true)
+        if [ -n "$pid" ]; then
+            log "Killing process on port $port (PID: $pid)"
+            kill -9 $pid 2>/dev/null || true
+        fi
+    done
+    
+    sleep 1
+    
+    local remaining=0
+    for port in 3000 50051 50052; do
+        if lsof -Pi :$port -sTCP:LISTEN >/dev/null 2>&1; then
+            remaining=$((remaining + 1))
+        fi
+    done
+    
+    if [ "$remaining" -eq 0 ]; then
+        log "All services force killed successfully"
+    else
+        warn "$remaining service(s) still running"
+    fi
+}
+
+clear_logs() {
+    log "Clearing all logs..."
+    
+    local log_files=(
+        "/tmp/prime.log"
+        "/tmp/prime-live.log"
+        "/tmp/gateway.log"
+        "/tmp/proclaw-gateway.log"
+        "/tmp/request-manager.log"
+        "/tmp/proclaw-rust-kernel.log"
+        "/tmp/proclaw-composer.log"
+    )
+    
+    for log_file in "${log_files[@]}"; do
+        if [ -f "$log_file" ]; then
+            > "$log_file"
+            log "Cleared: $log_file"
+        fi
+    done
+    
+    rm -f /tmp/prime-*.log 2>/dev/null || true
+    
+    log "All logs cleared"
+}
+
 case "${1:-}" in
     start)
         start_all
@@ -266,17 +321,25 @@ case "${1:-}" in
     test)
         test_system
         ;;
+    kill)
+        kill_all
+        ;;
+    clear-logs)
+        clear_logs
+        ;;
     *)
         echo "ProClaw System Manager"
         echo ""
-        echo "Usage: $0 {start|stop|restart|status|test|logs}"
+        echo "Usage: $0 {start|stop|restart|status|test|kill|clear-logs|logs}"
         echo ""
         echo "Commands:"
         echo "  start              Start all services"
-        echo "  stop               Stop all services"
+        echo "  stop               Stop all services gracefully"
+        echo "  kill               Force kill all services"
         echo "  restart            Restart all services"
         echo "  status             Show service status"
         echo "  test               Test system with a sample request"
+        echo "  clear-logs         Clear all log files"
         echo "  logs <service>     View logs (prime|gateway|request-manager)"
         echo ""
         echo "Services:"

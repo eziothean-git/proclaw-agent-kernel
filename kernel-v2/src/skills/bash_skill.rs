@@ -85,8 +85,12 @@ impl BashSkill {
                 // 检测执行模式
                 let mode = detect_execution_mode(command);
                 
-                // 创建请求
-                let mut request = BashRequest::new("execute", vec![command.to_string()]);
+                // 创建请求 - 提取命令的第一个词作为 command，其余作为 args
+                let cmd_parts: Vec<&str> = command.split_whitespace().collect();
+                let cmd_name = cmd_parts.first().copied().unwrap_or("");
+                let cmd_args: Vec<String> = cmd_parts.iter().skip(1).map(|&s| s.to_string()).collect();
+                
+                let mut request = BashRequest::new(cmd_name, cmd_args);
                 request.mode = mode;
                 
                 if let Some(dir) = working_dir {

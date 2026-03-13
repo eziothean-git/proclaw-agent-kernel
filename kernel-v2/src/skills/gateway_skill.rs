@@ -131,6 +131,17 @@ impl GatewaySkill {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'request_id' parameter"))?;
         
+        let session_id = ir.get("request_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or(request_id);
+        
+        let content_text = ir.get("content")
+            .and_then(|c| c.get("text"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        
+        let status = "completed";
+        
         let webhook_url = format!("{}/gateway/webhook/kernel-response", self.gateway_url);
         
         info!(
@@ -147,8 +158,15 @@ impl GatewaySkill {
                 .header("Content-Type", "application/json")
                 .json(&serde_json::json!({
                     "request_id": request_id,
-                    "ir": ir,
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "session_id": session_id,
+                    "status": status,
+                    "header": {
+                        "timestamp": chrono::Utc::now().to_rfc3339(),
+                    },
+                    "body": content_text,
+                    "metadata": {
+                        "ir": ir,
+                    },
                 }))
                 .send()
         ).await;

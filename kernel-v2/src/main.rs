@@ -153,7 +153,7 @@ async fn main() -> anyhow::Result<()> {
     let stream = UnixListenerStream::new(listener);
 
     // Start PrimePersonality TCP server in background (port 50051)
-    let prime_addr = "[::1]:50051".parse()?;
+    let prime_addr: std::net::SocketAddr = "127.0.0.1:50051".parse()?;
     let prime_server = Server::builder()
         .add_service(PrimePersonalityServer::new(prime_personality_service))
         .serve(prime_addr);

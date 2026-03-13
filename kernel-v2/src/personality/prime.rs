@@ -201,23 +201,76 @@ indicate if you need additional context from memory\n",
         request_id: &str,
     ) -> Result<IntermediateRepresentation> {
         let json_str = self.extract_json(response)?;
-
-        let mut ir: IntermediateRepresentation = match serde_json::from_str(&json_str) {
-            Ok(ir) => ir,
+        
+        let value: serde_json::Value = match serde_json::from_str(&json_str) {
+            Ok(v) => v,
             Err(e) => {
-                warn!(
-                    error = %e,
-                    response = %response.chars().take(200).collect::<String>(),
-                    "Failed to parse IR, using fallback"
-                );
+                warn!(error = %e, "Failed to parse JSON, using fallback");
                 return Ok(self.create_fallback_ir(request_id, response));
             }
         };
-
-        ir.request_id = request_id.to_string();
-
-        if ir.processes.is_empty() {
-            ir.processes = vec![ProcessDefinition {
+        
+        let ir = IntermediateRepresentation {
+            request_id: request_id.to_string(),
+            intent: value.get("intent")
+                .and_then(|v| v.as_str())
+                .unwrap_or("conversation")
+                .to_string(),
+            goals: value.get("goals")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect())
+                .unwrap_or_else(|| vec!["Process user request".to_string()]),
+            processes: self.extract_processes(&value),
+            context_hints: value.get("context_hints")
+                .and_then(|v| v.as_object())
+                .map(|obj| obj.iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect())
+                .unwrap_or_default(),
+            content: self.extract_content(&value).ok(),
+        };
+        
+        Ok(ir)
+    }
+    
+    fn extract_processes(&self, value: &serde_json::Value) -> Vec<ProcessDefinition> {
+        value.get("processes")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter()
+                .filter_map(|p| {
+                    Some(ProcessDefinition {
+                        name: p.get("name")?.as_str()?.to_string(),
+                        goal: p.get("goal")?.as_str()?.to_string(),
+                        capabilities: p.get("capabilities")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect())
+                            .unwrap_or_default(),
+                        forbidden_capabilities: p.get("forbidden_capabilities")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()),
+                        constraints: p.get("constraints")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()),
+                        security_level: p.get("security_level")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        dependencies: p.get("dependencies")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()),
+                    })
+                })
+                .collect())
+            .unwrap_or_else(|| vec![ProcessDefinition {
                 name: "conversation".to_string(),
                 goal: "Respond to user message".to_string(),
                 capabilities: vec![],
@@ -225,67 +278,54 @@ indicate if you need additional context from memory\n",
                 constraints: Some(vec!["max_steps: 5".to_string()]),
                 security_level: Some("low".to_string()),
                 dependencies: None,
-            }];
-        }
-
-        ir.content = Some(self.extract_content_from_json(&json_str)?);
-
-        Ok(ir)
+            }])
     }
-
-    fn extract_content_from_json(&self, json_str: &str) -> Result<Content> {
-        let value: serde_json::Value = serde_json::from_str(json_str)?;
-        
+    
+    fn extract_content(&self, value: &serde_json::Value) -> Result<Content> {
         if let Some(content_val) = value.get("content") {
             let text = content_val.get("text")
                 .and_then(|t| t.as_str())
-                .map(|s| {
-                    info!(extracted_text = %s, "Extracted content.text from JSON");
-                    s.to_string()
-                });
+                .map(String::from);
             
-            info!(has_content_field = true, text_is_some = text.is_some(), "Content extraction");
-            
-            let attachments = content_val.get("attachments").and_then(|a| {
-                a.as_array().map(|arr| {
-                    arr.iter().filter_map(|item| {
+            let attachments = content_val.get("attachments")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter()
+                    .filter_map(|item| {
                         Some(Attachment {
                             id: item.get("id")?.as_str()?.to_string(),
                             name: item.get("name")?.as_str()?.to_string(),
                             mime_type: item.get("mime_type")?.as_str()?.to_string(),
-                            local_path: item.get("local_path").and_then(|v| v.as_str().map(|s| s.to_string())),
-                            content_url: item.get("content_url").and_then(|v| v.as_str().map(|s| s.to_string())),
-                            size_bytes: item.get("size_bytes").and_then(|v| v.as_i64()),
+                            local_path: item.get("local_path")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            content_url: item.get("content_url")
+                                .and_then(|v| v.as_str())
+                                .map(String::from),
+                            size_bytes: item.get("size_bytes")
+                                .and_then(|v| v.as_i64()),
                         })
-                    }).collect::<Vec<_>>()
-                })
-            });
+                    })
+                    .collect());
             
-            let references = content_val.get("references").and_then(|r| {
-                r.as_array().map(|arr| {
-                    arr.iter().filter_map(|item| {
+            let references = content_val.get("references")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter()
+                    .filter_map(|item| {
                         Some(ResourceReference {
                             resource_id: item.get("resource_id")?.as_str()?.to_string(),
                             resource_type: item.get("resource_type")?.as_str()?.to_string(),
                             start_index: item.get("start_index")?.as_u64()? as usize,
                             end_index: item.get("end_index")?.as_u64()? as usize,
-                            metadata: item.get("metadata").and_then(|m| {
-                                m.as_object().map(|obj| {
-                                    obj.iter()
-                                        .map(|(k, v)| (k.clone(), v.clone()))
-                                        .collect::<HashMap<_, _>>()
-                                })
-                            }),
+                            metadata: item.get("metadata")
+                                .and_then(|m| m.as_object())
+                                .map(|obj| obj.iter()
+                                    .map(|(k, v)| (k.clone(), v.clone()))
+                                    .collect()),
                         })
-                    }).collect::<Vec<_>>()
-                })
-            });
+                    })
+                    .collect());
             
-            Ok(Content {
-                text,
-                attachments,
-                references,
-            })
+            Ok(Content { text, attachments, references })
         } else {
             Ok(Content {
                 text: Some("Processed successfully".to_string()),

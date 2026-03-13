@@ -28,7 +28,7 @@ export class WorkerPoolService {
     private readonly sessionAffinity: SessionAffinityService,
     private readonly primePersonalityClient: PrimePersonalityClient,
   ) {
-    this.maxWorkers = this.configService.get<number>('MAX_CONCURRENT_REQUESTS', 5);
+    this.maxWorkers = 1;
     this.pythonKernelUrl = this.configService.get<string>('PYTHON_KERNEL_URL', 'http://localhost:8000');
   }
 

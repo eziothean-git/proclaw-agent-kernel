@@ -126,30 +126,10 @@ export class PriorityRequestManagerService implements OnModuleInit, OnApplicatio
 
   private async processTask(task: RequestTask): Promise<void> {
     try {
-      // Check if gRPC dispatch callback is available
-      if (!this.taskDispatchCallback) {
-        this.logger.warn(`No gRPC dispatch callback registered for task ${task.requestId}`);
-        // Release slot and requeue task
-        await this.workerPool.releaseSlot(task.requestId);
-        await this.priorityQueue.enqueue(task);
-        return;
-      }
-
-      // Dispatch task via gRPC stream
-      const dispatched = await this.taskDispatchCallback(task);
-      
-      if (!dispatched) {
-        this.logger.warn(`Failed to dispatch task ${task.requestId} via gRPC stream`);
-        // Release slot and requeue task
-        await this.workerPool.releaseSlot(task.requestId);
-        await this.priorityQueue.enqueue(task);
-        return;
-      }
-
-      // Task successfully dispatched, update state
-      this.logger.log(`Task ${task.requestId} dispatched via gRPC stream`);
+      // Update state to PROCESSING
+      this.logger.log(`Task ${task.requestId} starting processing`);
       this.requestState.update(task.requestId, {
-        status: 2, // PROCESSING
+        status: 2,
         progress: 10,
         startedAt: new Date(),
       });
@@ -161,8 +141,16 @@ export class PriorityRequestManagerService implements OnModuleInit, OnApplicatio
         task.retryCount
       );
 
+      const result = await this.workerPool.processTask(task);
+
+      if (result.success) {
+        await this.handleSuccess(task, result.result!);
+      } else {
+        await this.handleFailure(task, result.error!);
+      }
+
     } catch (error) {
-      this.logger.error(`Error dispatching task ${task.requestId}: ${error.message}`);
+      this.logger.error(`Error processing task ${task.requestId}: ${error.message}`);
       // Release slot and handle failure
       await this.workerPool.releaseSlot(task.requestId);
       await this.handleFailure(task, error as Error);
