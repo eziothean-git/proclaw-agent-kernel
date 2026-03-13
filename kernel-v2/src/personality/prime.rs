@@ -8,7 +8,7 @@ use crate::block_composer::BlockComposerEngine;
 use crate::llm::{LLMRouter, config::DifficultyLevel};
 use crate::server::proto::{Block, Profile};
 
-use super::{IntermediateRepresentation, ProcessDefinition, InputMessage, PrimePersonalityConfig, ConversationContext, ConversationTurn};
+use super::{IntermediateRepresentation, ProcessDefinition, InputMessage, PrimePersonalityConfig, ConversationContext, ConversationTurn, Content, Attachment, ResourceReference};
 
 pub struct PrimePersonality {
     config: PrimePersonalityConfig,
@@ -228,7 +228,71 @@ indicate if you need additional context from memory\n",
             }];
         }
 
+        ir.content = Some(self.extract_content_from_json(&json_str)?);
+
         Ok(ir)
+    }
+
+    fn extract_content_from_json(&self, json_str: &str) -> Result<Content> {
+        let value: serde_json::Value = serde_json::from_str(json_str)?;
+        
+        if let Some(content_val) = value.get("content") {
+            let text = content_val.get("text")
+                .and_then(|t| t.as_str())
+                .map(|s| {
+                    info!(extracted_text = %s, "Extracted content.text from JSON");
+                    s.to_string()
+                });
+            
+            info!(has_content_field = true, text_is_some = text.is_some(), "Content extraction");
+            
+            let attachments = content_val.get("attachments").and_then(|a| {
+                a.as_array().map(|arr| {
+                    arr.iter().filter_map(|item| {
+                        Some(Attachment {
+                            id: item.get("id")?.as_str()?.to_string(),
+                            name: item.get("name")?.as_str()?.to_string(),
+                            mime_type: item.get("mime_type")?.as_str()?.to_string(),
+                            local_path: item.get("local_path").and_then(|v| v.as_str().map(|s| s.to_string())),
+                            content_url: item.get("content_url").and_then(|v| v.as_str().map(|s| s.to_string())),
+                            size_bytes: item.get("size_bytes").and_then(|v| v.as_i64()),
+                        })
+                    }).collect::<Vec<_>>()
+                })
+            });
+            
+            let references = content_val.get("references").and_then(|r| {
+                r.as_array().map(|arr| {
+                    arr.iter().filter_map(|item| {
+                        Some(ResourceReference {
+                            resource_id: item.get("resource_id")?.as_str()?.to_string(),
+                            resource_type: item.get("resource_type")?.as_str()?.to_string(),
+                            start_index: item.get("start_index")?.as_u64()? as usize,
+                            end_index: item.get("end_index")?.as_u64()? as usize,
+                            metadata: item.get("metadata").and_then(|m| {
+                                m.as_object().map(|obj| {
+                                    obj.iter()
+                                        .map(|(k, v)| (k.clone(), v.clone()))
+                                        .collect::<HashMap<_, _>>()
+                                })
+                            }),
+                        })
+                    }).collect::<Vec<_>>()
+                })
+            });
+            
+            Ok(Content {
+                text,
+                attachments,
+                references,
+            })
+        } else {
+            Ok(Content {
+                text: Some("Processed successfully".to_string()),
+                attachments: None,
+                references: None,
+            })
+        }
     }
 
     fn extract_json(&self,
@@ -266,6 +330,11 @@ indicate if you need additional context from memory\n",
                 dependencies: None,
             }],
             context_hints: HashMap::new(),
+            content: Some(Content {
+                text: Some(response.to_string()),
+                attachments: None,
+                references: None,
+            }),
         }
     }
 }

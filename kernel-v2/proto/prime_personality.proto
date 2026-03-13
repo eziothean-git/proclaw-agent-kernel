@@ -87,6 +87,29 @@ message ProcessDefinition {
   repeated string dependencies = 7;
 }
 
+message Attachment {
+  string id = 1;
+  string name = 2;
+  string mime_type = 3;
+  string local_path = 4;
+  string content_url = 5;
+  int64 size_bytes = 6;
+}
+
+message ResourceReference {
+  string resource_id = 1;
+  string resource_type = 2;
+  int32 start_index = 3;
+  int32 end_index = 4;
+  map<string, string> metadata = 5;
+}
+
+message Content {
+  string text = 1;
+  repeated Attachment attachments = 2;
+  repeated ResourceReference references = 3;
+}
+
 // Intermediate Representation（Prime Personality 输出）
 message IntermediateRepresentation {
   string request_id = 1;
@@ -94,6 +117,7 @@ message IntermediateRepresentation {
   repeated string goals = 3;
   repeated ProcessDefinition processes = 4;
   map<string, string> context_hints = 5;
+  Content content = 6;
 }
 
 // 处理请求

@@ -4,4 +4,4 @@ pub mod config;
 
 pub use models::*;
 pub use prime::PrimePersonality;
-pub use config::PrimePersonalityConfig;
+pub use config::{PrimePersonalityConfig, DEFAULT_SYSTEM_PROMPT};

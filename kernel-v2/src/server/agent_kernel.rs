@@ -147,14 +147,29 @@ impl AgentKernelService {
         // 初始化 LLM Router
         let mut llm_config = LLMRouterConfig::from_env();
         if !config.llm_api_key.is_empty() {
-            let mut provider = crate::llm::config::ProviderConfig::openai(config.llm_api_key.clone());
-            provider.base_url = config.llm_base_url.clone();
-            provider.default_model = config.llm_model.clone();
-            llm_config.providers.insert("openai".to_string(), provider);
-            llm_config.default_provider = "openai".to_string();
+            let provider = crate::llm::config::ProviderConfig {
+                provider_type: crate::llm::config::ProviderType::Ark,
+                name: "Ark".to_string(),
+                base_url: config.llm_base_url.clone(),
+                api_key: config.llm_api_key.clone(),
+                default_model: config.llm_model.clone(),
+                models: vec![crate::llm::config::ModelConfig {
+                    name: config.llm_model.clone(),
+                    display_name: config.llm_model.clone(),
+                    max_tokens: 8192,
+                    cost_per_1k_input: 0.01,
+                    cost_per_1k_output: 0.02,
+                    capabilities: vec!["complex_reasoning".to_string(), "code".to_string()],
+                    difficulty_level: crate::llm::config::DifficultyLevel::Hard,
+                }],
+                priority: 1,
+                enabled: true,
+            };
+            llm_config.providers.insert("ark".to_string(), provider);
+            llm_config.default_provider = "ark".to_string();
         }
         let llm_router = Arc::new(LLMRouter::new(llm_config));
-        info!("LLM Router initialized with multiple providers");
+        info!("LLM Router initialized with Ark provider");
         
         // 初始化 Coordinator
         let lock_manager = Arc::new(

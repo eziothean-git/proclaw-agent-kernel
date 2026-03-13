@@ -88,8 +88,14 @@ impl LLMClient for SimpleLLMClient {
             max_tokens: self.max_tokens,
         };
         
+        let url = if self.base_url.contains("volces.com") {
+            format!("{}/chat/completions", self.base_url)
+        } else {
+            format!("{}/v1/chat/completions", self.base_url)
+        };
+        
         let response = self.client
-            .post(format!("{}/v1/chat/completions", self.base_url))
+            .post(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&request)
@@ -103,7 +109,7 @@ impl LLMClient for SimpleLLMClient {
         
         let llm_response: LLMResponse = response.json().await?;
         
-        Ok(llm_response.content)
+        Ok(llm_response.content())
     }
 }
 

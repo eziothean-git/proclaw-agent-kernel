@@ -23,6 +23,7 @@ use proto::{
     HealthCheckRequest, HealthCheckResponse,
     ProcessingStatus, InputMessage as ProtoInputMessage,
     IntermediateRepresentation as ProtoIr, ProcessDefinition as ProtoProcessDef,
+    Content as ProtoContent, Attachment as ProtoAttachment, ResourceReference as ProtoResourceRef,
 };
 
 pub struct PrimePersonalityService {
@@ -188,13 +189,54 @@ fn convert_proto_to_input(proto: ProtoInputMessage) -> InputMessage {
     InputMessage {
         header,
         body: proto.body,
-        metadata: None, // 简化处理
+        metadata: None,
         context,
     }
 }
 
-/// 转换内部 IR 到 Proto 类型
 fn convert_ir_to_proto(ir: IntermediateRepresentation) -> ProtoIr {
+    let content = ir.content.map(|c| {
+        let attachments = c.attachments.map(|atts| {
+            atts.into_iter().map(|a| ProtoAttachment {
+                id: a.id,
+                name: a.name,
+                mime_type: a.mime_type,
+                local_path: a.local_path.unwrap_or_default(),
+                content_url: a.content_url.unwrap_or_default(),
+                size_bytes: a.size_bytes.unwrap_or_default(),
+            }).collect()
+        }).unwrap_or_default();
+
+        let references = c.references.map(|refs| {
+            refs.into_iter().map(|r| ProtoResourceRef {
+                resource_id: r.resource_id,
+                resource_type: r.resource_type,
+                start_index: r.start_index as i32,
+                end_index: r.end_index as i32,
+                metadata: r.metadata.map(|m| {
+                    m.into_iter().map(|(k, v)| (k, v.to_string())).collect()
+                }).unwrap_or_default(),
+            }).collect()
+        }).unwrap_or_default();
+
+        let text = c.text.map(|t| {
+            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&t) {
+                if let Some(nested_content) = json_val.get("content") {
+                    if let Some(nested_text) = nested_content.get("text").and_then(|v| v.as_str()) {
+                        return nested_text.to_string();
+                    }
+                }
+            }
+            t
+        }).unwrap_or_default();
+
+        ProtoContent {
+            text,
+            attachments,
+            references,
+        }
+    });
+
     ProtoIr {
         request_id: ir.request_id,
         intent: ir.intent,
@@ -211,5 +253,6 @@ fn convert_ir_to_proto(ir: IntermediateRepresentation) -> ProtoIr {
         context_hints: ir.context_hints.into_iter().map(|(k, v)| {
             (k, v.to_string())
         }).collect(),
+        content,
     }
 }

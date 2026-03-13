@@ -18,11 +18,25 @@ pub struct Message {
     pub content: String,
 }
 
-/// LLM 响应
 #[derive(Debug, Clone, Deserialize)]
 pub struct LLMResponse {
-    pub content: String,
+    pub choices: Vec<Choice>,
     pub usage: Option<Usage>,
+}
+
+impl LLMResponse {
+    pub fn content(&self) -> String {
+        self.choices
+            .first()
+            .map(|c| c.message.content.clone())
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Choice {
+    pub message: Message,
+    pub finish_reason: Option<String>,
 }
 
 /// Token 使用量

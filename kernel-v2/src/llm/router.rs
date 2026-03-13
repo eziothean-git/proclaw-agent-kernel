@@ -268,7 +268,7 @@ impl LLMRouter {
             config.timeout_seconds,
         ).await
     }
-    
+
     /// 使用指定 Provider 生成
     pub async fn generate_with_provider(
         &self,
@@ -292,7 +292,7 @@ impl LLMRouter {
             60,
         ).await
     }
-    
+
     /// 获取 Provider 客户端
     fn get_client(
         &self,
@@ -303,7 +303,6 @@ impl LLMRouter {
             .ok_or_else(|| LLMError::ProviderNotFound(provider_name.to_string()))
     }
     
-    /// 执行请求（带超时）
     async fn execute_with_timeout(
         client: Arc<dyn LLMClient>,
         prompt: String,
@@ -311,11 +310,10 @@ impl LLMRouter {
         _config: LLMRequestConfig,
         timeout_seconds: u64,
     ) -> Result<String, LLMError> {
-        // 构建消息
         let messages = vec![
             Message {
                 role: "system".to_string(),
-                content: "You are an Agent Thread in an Agent Kernel system.".to_string(),
+                content: "You are an AI assistant.".to_string(),
             },
             Message {
                 role: "user".to_string(),

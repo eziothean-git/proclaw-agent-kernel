@@ -139,44 +139,68 @@ impl GatewaySkill {
             "Sending IR to Gateway webhook"
         );
         
-        let response = self.client
-            .post(&webhook_url)
-            .header("Authorization", format!("Bearer {}", self.auth_token))
-            .header("Content-Type", "application/json")
-            .json(&serde_json::json!({
-                "request_id": request_id,
-                "ir": ir,
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-            }))
-            .send()
-            .await?;
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.client
+                .post(&webhook_url)
+                .header("Authorization", format!("Bearer {}", self.auth_token))
+                .header("Content-Type", "application/json")
+                .json(&serde_json::json!({
+                    "request_id": request_id,
+                    "ir": ir,
+                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                }))
+                .send()
+        ).await;
         
-        let status = response.status();
-        let body = response.text().await?;
-        
-        if status.is_success() {
-            info!(
-                request_id = %request_id,
-                status = %status,
-                "Successfully sent IR to Gateway"
-            );
-            Ok(serde_json::json!({
-                "success": true,
-                "gateway_status": status.as_u16(),
-                "gateway_response": body,
-            }))
-        } else {
-            warn!(
-                request_id = %request_id,
-                status = %status,
-                response = %body,
-                "Gateway webhook failed"
-            );
-            Err(anyhow::anyhow!(
-                "Gateway webhook failed: {} - {}",
-                status,
-                body
-            ))
+        match result {
+            Ok(Ok(response)) => {
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                
+                if status.is_success() {
+                    info!(
+                        request_id = %request_id,
+                        status = %status,
+                        "Successfully sent IR to Gateway"
+                    );
+                    Ok(serde_json::json!({
+                        "success": true,
+                        "gateway_status": status.as_u16(),
+                        "gateway_response": body,
+                    }))
+                } else {
+                    warn!(
+                        request_id = %request_id,
+                        status = %status,
+                        response = %body,
+                        "Gateway webhook returned error status"
+                    );
+                    Err(anyhow::anyhow!(
+                        "Gateway webhook failed: {} - {}",
+                        status,
+                        body
+                    ))
+                }
+            }
+            Ok(Err(e)) => {
+                warn!(
+                    request_id = %request_id,
+                    error = %e,
+                    "Failed to connect to Gateway webhook"
+                );
+                Err(anyhow::anyhow!(
+                    "Gateway connection failed: {}. Note: Gateway may not be running.",
+                    e
+                ))
+            }
+            Err(_) => {
+                warn!(
+                    request_id = %request_id,
+                    "Gateway webhook timeout after 5s"
+                );
+                Err(anyhow::anyhow!("Gateway webhook timeout"))
+            }
         }
     }
 }

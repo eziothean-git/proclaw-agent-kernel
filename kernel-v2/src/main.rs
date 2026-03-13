@@ -109,8 +109,12 @@ async fn main() -> anyhow::Result<()> {
     // Get skill registry from AgentKernelService for PrimePersonality
     let skill_registry = agent_kernel_service.skill_registry();
 
-    // Create PrimePersonality service
-    let prime_config = PrimePersonalityConfig::default();
+    let prime_config = PrimePersonalityConfig {
+        model_name: args.llm_model.clone(),
+        temperature: 0.3,
+        max_tokens: 4096,
+        system_prompt: proclaw_block_composer::personality::DEFAULT_SYSTEM_PROMPT.to_string(),
+    };
     let prime_personality = Arc::new(PrimePersonality::new(
         prime_config,
         agent_kernel_service.llm_router(),
