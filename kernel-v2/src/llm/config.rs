@@ -103,10 +103,22 @@ impl ProviderConfig {
     }
     
     /// 获取指定难度级别的模型
+    /// 首先尝试匹配精确难度，如果没有则选择最接近的更高难度模型
     pub fn get_model_for_difficulty(&self, level: DifficultyLevel) -> Option<&ModelConfig> {
+        // 1. 首先尝试精确匹配
+        if let Some(model) = self.models.iter().find(|m| m.difficulty_level == level) {
+            return Some(model);
+        }
+        
+        // 2. 尝试找到最接近的更高难度模型
+        let level_value = level as i32;
         self.models.iter()
-            .filter(|m| m.difficulty_level == level || m.difficulty_level <= level)
+            .filter(|m| (m.difficulty_level as i32) >= level_value)
             .min_by_key(|m| m.difficulty_level as i32)
+            .or_else(|| {
+                // 3. 如果没有更高难度的，使用最高难度的
+                self.models.iter().max_by_key(|m| m.difficulty_level as i32)
+            })
     }
 }
 

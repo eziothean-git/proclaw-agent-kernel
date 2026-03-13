@@ -1,16 +1,23 @@
 //! Prime Personality gRPC Service
 //!
-//! 接收 Gateway 请求，内部作为 Agent 执行：
+//! 接收 Gateway 请求，执行完整链路：
 //! 1. gRPC 接收 ProcessRequest
-//! 2. 调用 PrimePersonality 生成 IR
-//! 3. 通过 AgenticOSInterface Skill 或 SendReply Skill 发送结果
+//! 2. Prime Personality 生成 IR
+//! 3. IR Process Executor 执行 IR.processes
+//! 4. Prime 读取执行结果生成最终响应
+//! 5. 通过 Gateway Skill 发送结果
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use tracing::{info, instrument, warn};
 
 use crate::personality::{PrimePersonality as PrimePersonalityCore, InputMessage, IntermediateRepresentation};
 use crate::coordinator::skill_registry::SkillRegistry;
+use crate::coordinator::ExecutionCoordinator;
+use crate::block_composer::BlockComposerEngine;
+use crate::executor::IRProcessExecutor;
+use crate::llm::LLMRouter;
 use crate::auth::CapabilityLevel;
 
 pub mod proto {
@@ -29,22 +36,40 @@ use proto::{
 pub struct PrimePersonalityService {
     personality: Arc<PrimePersonalityCore>,
     skill_registry: Arc<SkillRegistry>,
+    ir_executor: Arc<IRProcessExecutor>,
+    data_path: PathBuf,
 }
 
 impl PrimePersonalityService {
-    pub fn new(
+    pub async fn new(
         personality: Arc<PrimePersonalityCore>,
         skill_registry: Arc<SkillRegistry>,
-    ) -> Self {
-        Self {
+        coordinator: Arc<ExecutionCoordinator>,
+        block_composer: Arc<BlockComposerEngine>,
+        llm_router: Arc<LLMRouter>,
+        data_path: PathBuf,
+    ) -> anyhow::Result<Self> {
+        let ir_executor = Arc::new(
+            IRProcessExecutor::new(
+                data_path.clone(),
+                coordinator,
+                block_composer,
+                llm_router,
+            ).await?
+        );
+
+        Ok(Self {
             personality,
             skill_registry,
-        }
+            ir_executor,
+            data_path,
+        })
     }
 
-    async fn send_ir_to_gateway(
+    async fn send_result_to_gateway(
         &self,
         ir: IntermediateRepresentation,
+        execution_summary: String,
     ) -> anyhow::Result<()> {
         let skill_request = crate::coordinator::models::SkillRequest {
             request_id: ir.request_id.clone(),
@@ -53,6 +78,7 @@ impl PrimePersonalityService {
             parameters: serde_json::json!({
                 "ir": ir,
                 "request_id": ir.request_id,
+                "execution_summary": execution_summary,
             }),
             context: crate::coordinator::models::SkillContext {
                 thread_id: format!("prime_{}", ir.request_id),
@@ -71,7 +97,7 @@ impl PrimePersonalityService {
             Ok(())
         } else {
             Err(anyhow::anyhow!(
-                "Failed to submit IR: {}",
+                "Failed to submit result: {}",
                 result.error.unwrap_or_default()
             ))
         }
@@ -98,13 +124,16 @@ impl PrimePersonality for PrimePersonalityService {
         };
 
         let request_id = input.header.request_id.clone();
+        let session_id = input.header.session_id.clone().unwrap_or_else(|| request_id.clone());
 
         info!(
             request_id = %request_id,
+            session_id = %session_id,
             "Prime Personality received request"
         );
 
-        // 调用 Prime Personality 生成 IR（Agent 执行流程）
+        // ========== 第一轮：Prime 生成 IR ==========
+        info!("=== Phase 1: Prime generating IR ===");
         let ir = match self.personality.process_request(input, None).await {
             Ok(ir) => ir,
             Err(e) => {
@@ -118,13 +147,108 @@ impl PrimePersonality for PrimePersonalityService {
             }
         };
 
-        // 通过 Skill 发送结果回 Gateway
-        if let Err(e) = self.send_ir_to_gateway(ir.clone()).await {
-            warn!(error = %e, "Failed to send IR to gateway");
+        info!(
+            intent = %ir.intent,
+            process_count = ir.processes.len(),
+            "IR generated"
+        );
+
+        // 如果没有 processes（简单对话），直接返回
+        if ir.processes.is_empty() {
+            info!("No processes to execute, returning IR directly");
+            
+            // 发送结果到 Gateway
+            let summary = ir.content.as_ref()
+                .and_then(|c| c.text.clone())
+                .unwrap_or_default();
+            let _ = self.send_result_to_gateway(ir.clone(), summary).await;
+            
+            let proto_ir = convert_ir_to_proto(ir);
+            return Ok(Response::new(ProcessRequestResponse {
+                request_id,
+                status: ProcessingStatus::Completed as i32,
+                ir: Some(proto_ir),
+                error_message: String::new(),
+            }));
         }
 
-        // 返回 IR 给调用方（Gateway）
-        let proto_ir = convert_ir_to_proto(ir);
+        // ========== 第二轮：执行 IR Processes ==========
+        info!("=== Phase 2: Executing IR processes ===");
+        let execution_results = match self.ir_executor.execute_ir(&ir, &session_id).await {
+            Ok(results) => {
+                info!(result_count = results.len(), "IR execution completed");
+                results
+            }
+            Err(e) => {
+                warn!(error = %e, "IR execution failed");
+                // 即使执行失败，也继续生成响应
+                vec![]
+            }
+        };
+
+        // ========== 第三轮：Prime 生成最终响应 ==========
+        info!("=== Phase 3: Prime generating final response ===");
+        
+        // 构建执行报告
+        let execution_summary = self.build_execution_summary(&ir, &execution_results
+        );
+        
+        // 获取 Session 全量日志
+        let session_log = self.ir_executor.get_session_full_log(&session_id).await
+            .map(|log| format!("{:?}", log))
+            .unwrap_or_default();
+
+        // 构建第二轮输入
+        let second_turn_input = InputMessage {
+            header: crate::personality::models::InputHeader {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                platform: "internal".to_string(),
+                device_id: "prime_executor".to_string(),
+                user_id: "system".to_string(),
+                session_id: Some(session_id.clone()),
+                source_ip: None,
+                client_version: None,
+                priority: 1,
+                request_id: format!("{}_final", request_id),
+            },
+            body: format!(
+                "原始请求执行完成。以下是执行结果：\n\n{}\n\nSession日志:\n{}",
+                execution_summary,
+                session_log
+            ),
+            metadata: None,
+            context: Some(crate::personality::models::ConversationContext {
+                session_id: session_id.clone(),
+                conversation_history: vec![],
+                window_size: 10,
+                full_context_path: self.data_path.join("context").to_str().unwrap_or("").to_string(),
+                total_turns: 2,
+            }),
+        };
+
+        // Prime 生成最终响应
+        let final_ir = match self.personality.process_request(second_turn_input, None).await {
+            Ok(ir) => {
+                info!("Final response generated");
+                ir
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to generate final response, using original IR");
+                ir // 回退到原始 IR
+            }
+        };
+
+        // 发送最终结果到 Gateway
+        let summary = final_ir.content.as_ref()
+            .and_then(|c| c.text.clone())
+            .unwrap_or_else(|| execution_summary.clone());
+        
+        if let Err(e) = self.send_result_to_gateway(final_ir.clone(), summary).await {
+            warn!(error = %e, "Failed to send result to gateway");
+        }
+
+        // 返回最终 IR 给调用方
+        let proto_ir = convert_ir_to_proto(final_ir);
 
         Ok(Response::new(ProcessRequestResponse {
             request_id,
@@ -146,6 +270,42 @@ impl PrimePersonality for PrimePersonalityService {
                 nanos: 0,
             }),
         }))
+    }
+}
+
+impl PrimePersonalityService {
+    /// 构建执行摘要
+    fn build_execution_summary(
+        &self,
+        ir: &IntermediateRepresentation,
+        results: &[crate::executor::ProcessExecutionResult],
+    ) -> String {
+        let mut summary = format!(
+            "执行摘要：\n原始 Intent: {}\n原始 Goals: {:?}\nProcess 数量: {}\n\n执行结果:\n",
+            ir.intent,
+            ir.goals,
+            results.len()
+        );
+
+        for (idx, result) in results.iter().enumerate() {
+            summary.push_str(&format!(
+                "\n[Process {}] {}\n  状态: {}\n  执行步骤: {}\n",
+                idx + 1,
+                result.process_name,
+                if result.success { "成功" } else { "失败" },
+                result.execution_log.len()
+            ));
+
+            if let Some(answer) = &result.final_answer {
+                summary.push_str(&format!("  结果: {}\n", answer));
+            }
+
+            if let Some(error) = &result.error_message {
+                summary.push_str(&format!("  错误: {}\n", error));
+            }
+        }
+
+        summary
     }
 }
 

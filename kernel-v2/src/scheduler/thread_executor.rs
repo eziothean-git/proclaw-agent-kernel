@@ -224,6 +224,17 @@ impl ThreadExecutor {
         // 4. UPDATE: 执行并更新状态
         match intent.intent_type {
             IntentType::ToolCall => {
+                if intent.tool_calls.is_empty() {
+                    tracing::warn!(
+                        step = self.current_step,
+                        "ToolCall intent with empty tool_calls, treating as FinalAnswer"
+                    );
+                    let _ = self.event_tx.send(ExecutorEvent::Completed {
+                        reason: CompletionReason::FinalAnswer,
+                    }).await;
+                    return Ok(false);
+                }
+                
                 for tool_call in intent.tool_calls {
                     let skill_name = tool_call.skill_name.clone();
                     let tool_name = tool_call.tool_name.clone();

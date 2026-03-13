@@ -147,21 +147,34 @@ impl AgentKernelService {
         // 初始化 LLM Router
         let mut llm_config = LLMRouterConfig::from_env();
         if !config.llm_api_key.is_empty() {
-            let provider = crate::llm::config::ProviderConfig {
+                let provider = crate::llm::config::ProviderConfig {
                 provider_type: crate::llm::config::ProviderType::Ark,
                 name: "Ark".to_string(),
                 base_url: config.llm_base_url.clone(),
                 api_key: config.llm_api_key.clone(),
                 default_model: config.llm_model.clone(),
-                models: vec![crate::llm::config::ModelConfig {
-                    name: config.llm_model.clone(),
-                    display_name: config.llm_model.clone(),
-                    max_tokens: 8192,
-                    cost_per_1k_input: 0.01,
-                    cost_per_1k_output: 0.02,
-                    capabilities: vec!["complex_reasoning".to_string(), "code".to_string()],
-                    difficulty_level: crate::llm::config::DifficultyLevel::Hard,
-                }],
+                models: vec![
+                    // Medium 难度模型 - 用于一般任务
+                    crate::llm::config::ModelConfig {
+                        name: config.llm_model.clone(),
+                        display_name: config.llm_model.clone(),
+                        max_tokens: 8192,
+                        cost_per_1k_input: 0.01,
+                        cost_per_1k_output: 0.02,
+                        capabilities: vec!["complex_reasoning".to_string(), "code".to_string()],
+                        difficulty_level: crate::llm::config::DifficultyLevel::Medium,
+                    },
+                    // Hard 难度模型 - 用于复杂任务
+                    crate::llm::config::ModelConfig {
+                        name: config.llm_model.clone(),
+                        display_name: format!("{}-hard", config.llm_model),
+                        max_tokens: 8192,
+                        cost_per_1k_input: 0.015,
+                        cost_per_1k_output: 0.03,
+                        capabilities: vec!["complex_reasoning".to_string(), "code".to_string(), "expert".to_string()],
+                        difficulty_level: crate::llm::config::DifficultyLevel::Hard,
+                    },
+                ],
                 priority: 1,
                 enabled: true,
             };
@@ -234,6 +247,7 @@ impl AgentKernelService {
                 config.data_path.clone(),
                 coordinator.clone(),
                 block_composer.clone(),
+                llm_router.clone(),
             ).await?);
 
             (tm, sh)
@@ -895,5 +909,22 @@ impl AgentKernelService {
 
     pub fn llm_router(&self) -> Arc<LLMRouter> {
         Arc::clone(&self.llm_router)
+    }
+
+    pub fn coordinator(&self) -> Arc<ExecutionCoordinator> {
+        Arc::clone(&self.coordinator)
+    }
+
+    pub fn block_composer(&self) -> Arc<BlockComposerEngine> {
+        Arc::clone(&self.block_composer)
+    }
+
+    #[cfg(feature = "control-plane")]
+    pub fn session_host(&self) -> Arc<SessionHostSkills> {
+        Arc::clone(&self.session_host)
+    }
+
+    pub fn config(&self) -> &AgentKernelConfig {
+        &self.config
     }
 }

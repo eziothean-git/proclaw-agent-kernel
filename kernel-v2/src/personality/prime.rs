@@ -42,11 +42,17 @@ impl PrimePersonality {
         );
 
         let prompt = self.build_prompt(&input).await?;
+        
+        // 打印 prompt 用于调试
+        tracing::debug!("Prime prompt:\n{}", prompt);
 
         let response = self.llm_router.generate(
             prompt,
             DifficultyLevel::Hard,
         ).await?;
+        
+        // 打印 response 用于调试
+        tracing::debug!("Prime response:\n{}", response);
 
         let ir = self.parse_ir(&response, &input.header.request_id)?;
 

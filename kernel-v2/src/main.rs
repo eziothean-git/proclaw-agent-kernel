@@ -118,13 +118,18 @@ async fn main() -> anyhow::Result<()> {
     let prime_personality = Arc::new(PrimePersonality::new(
         prime_config,
         agent_kernel_service.llm_router(),
-        block_composer,
+        block_composer.clone(),
     ));
 
+    // Create PrimePersonalityService with IR Executor
     let prime_personality_service = PrimePersonalityService::new(
         prime_personality,
         skill_registry,
-    );
+        agent_kernel_service.coordinator(),
+        block_composer,
+        agent_kernel_service.llm_router(),
+        data_path,
+    ).await?;
 
     // Start background tasks
     agent_kernel_service.start_background_tasks().await;

@@ -57,15 +57,12 @@ impl SessionHostSkills {
         data_path: PathBuf,
         coordinator: Arc<ExecutionCoordinator>,
         block_composer: Arc<BlockComposerEngine>,
+        llm_router: Arc<LLMRouter>,
     ) -> anyhow::Result<Self> {
         // 创建 Process Manager
         let process_manager = Arc::new(RwLock::new(
             ProcessManager::new(&data_path).await?
         ));
-        
-        // 创建 LLM Router
-        let llm_config = LLMRouterConfig::from_env();
-        let llm_router = Arc::new(LLMRouter::new(llm_config));
         
         // 创建 Context Builder
         let context_builder = Arc::new(ContextBuilder::new(block_composer.clone()));
@@ -248,28 +245,53 @@ impl SessionHostSkills {
         thread_id: &ThreadId,
         difficulty: DifficultyLevel,
     ) -> anyhow::Result<String> {
+        self.spawn_executor_in_process_with_events(
+            process_id,
+            thread_id,
+            difficulty,
+            None,
+        ).await
+    }
+
+    /// SKILL: 在 Process 中启动 Thread Executor（带外部事件通道）
+    ///
+    /// 参数：
+    /// - process_id: Process ID
+    /// - thread_id: Thread ID
+    /// - difficulty: LLM 难度级别
+    /// - external_event_tx: 可选的外部事件发送器
+    ///
+    /// 返回：Executor ID
+    pub async fn spawn_executor_in_process_with_events(
+        &self,
+        process_id: &ProcessId,
+        thread_id: &ThreadId,
+        difficulty: DifficultyLevel,
+        external_event_tx: Option<tokio::sync::mpsc::Sender<crate::scheduler::thread_executor::ExecutorEvent>>,
+    ) -> anyhow::Result<String> {
         info!(
             process_id = %process_id.0,
             thread_id = %thread_id.0,
             difficulty = ?difficulty,
             "Spawning executor in process via SessionHost skill"
         );
-        
+
         // 1. 验证 Process 存在
         let manager = self.process_manager.read().await;
         if manager.get_process(process_id).is_none() {
             return Err(anyhow::anyhow!("Process not found"));
         }
         drop(manager);
-        
+
         // 2. 加载 Thread
         let thread_storage = ThreadStorage::load(&self.data_path, thread_id
         ).await?;
-        
+
         // 3. 创建 Executor
         let executor_id = crate::agent_thread::models::ExecutorId::new();
         let executor_id_str = executor_id.0.clone();
-        let (event_tx, _event_rx) = tokio::sync::mpsc::channel(100);
+        let (internal_event_tx, _event_rx) = tokio::sync::mpsc::channel(100);
+        let event_tx = external_event_tx.unwrap_or(internal_event_tx);
         
         let executor = ThreadExecutor::new(
             self.data_path.clone(),

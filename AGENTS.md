@@ -480,4 +480,84 @@ let ir = IntermediateRepresentation {
 - ✅ Robust IR parsing (flexible field extraction)
 - ✅ Unified management script (proclaw.sh)
 
-**Next**: Memory retrieval and multi-agent collaboration
+**Phase 4**: 🔄 In Progress - Full execution chain + Dynamic configuration
+
+## Current Progress (2026-03-14)
+
+### ✅ Completed
+
+**OS Interface Skill Integration:**
+- ✅ IR Process Executor - 解析并执行 IR.processes
+- ✅ Host → Prime 双向通信链路
+- ✅ Thread Executor 事件上报机制
+- ✅ Session 全量日志读取
+- ✅ Prime Personality Server 集成 IR Executor
+- ✅ 完整链路打通: Prime → Host → Thread → Execution → Prime → Gateway
+
+**Bug Fixes:**
+- ✅ Thread Executor 无限循环问题（空 tool_calls 检测）
+- ✅ LLM Router 配置传递问题
+- ✅ Event channel 不匹配问题
+- ✅ 难度匹配逻辑修复（Easy → Medium fallback）
+
+**Infrastructure:**
+- ✅ Dynamic configuration system (`config/dynamic.rs`)
+- ✅ Support for hot-reload configuration
+- ✅ Feature flags for toggling components
+- ✅ Debug utilities (prompt/response logging)
+
+### 🔄 In Progress / TODO
+
+**Prime Intent Recognition:**
+- 🔄 提示词工程优化（LLM 未遵循提示词识别文件操作意图）
+- ⏳ 文件操作关键词检测改进
+- ⏳ Few-shot examples for file operations
+- ⏳ Intent override mechanism based on dynamic config
+
+**Testing:**
+- ⏳ 完整链路集成测试（需要 Prime 正确识别意图后才能通过）
+- ⏳ Load testing for concurrent requests
+- ⏳ Error handling edge cases
+
+**Documentation:**
+- ✅ Updated AGENTS.md with current progress
+- ⏳ API documentation update
+- ⏳ Architecture diagram update
+
+### 🐛 Known Issues
+
+1. **Prime Intent Recognition**: LLM (glm-4-7-251222) 无法稳定遵循提示词，将文件读取请求识别为 `conversation` 而非 `file_operation`
+   - Workaround: 需要改进提示词工程或更换模型
+   - Impact: 文件操作功能无法正常工作
+
+2. **Thread Result Collection**: 虽然已实现，但未在 Prime 第二轮迭代中充分利用
+   - 需要优化 Phase 3 的上下文构建
+
+### 🔧 Configuration
+
+Dynamic config file location: `./data/config/dynamic.yaml`
+
+Example configuration:
+```yaml
+prime:
+  enable_intent_override: true
+  intent_keywords:
+    file_operation:
+      - "读取文件"
+      - "read file"
+      - "/home/"
+      - ".md"
+  temperature_override: 0.2
+
+features:
+  enable_ir_executor: true
+  enable_phase_3: true
+  enable_auto_intent_fix: false
+
+debug:
+  print_prime_prompt: false
+  print_prime_response: false
+  save_ir_to_file: false
+```
+
+**Next**: Optimize Prime prompts for file operation recognition
