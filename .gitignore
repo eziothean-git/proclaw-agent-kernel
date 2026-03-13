@@ -71,5 +71,29 @@ tmp/
 # Runtime data directories
 agent-kernel/data/
 agent-kernel/apps/python-kernel/data/
+agent-kernel/apps/gateway/data/
+agent-kernel/apps/request-manager/data/
+kernel-v2/data/
 !agent-kernel/data/.gitkeep
 !agent-kernel/apps/python-kernel/data/.gitkeep
+
+# Log files
+/tmp/*.log
+*.log
+nohup.out
+
+# Protobuf generated files (should be regenerated)
+*_pb.js
+*_grpc_pb.js
+
+# Python test files
+test_*.py
+!test_*.py.example
+
+# Deprecated (kept for reference but not tracked)
+deprecated/
+
+# Sisyphus temp files
+.sisyphus/boulder.json
+.sisyphus/notepads/
+.sisyphus/drafts/

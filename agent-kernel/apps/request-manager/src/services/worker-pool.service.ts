@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { RequestTask, ProcessResult } from '../interfaces';
 import { AuditLoggerService } from './audit-logger.service';
 import { SessionAffinityService } from './session-affinity.service';
+import { PrimePersonalityClient } from '../grpc/prime-personality.client';
 import { GrpcError, TimeoutException, CancelledException } from '../exceptions';
 import { PRIORITY_NAMES } from '../constants';
 
@@ -25,6 +26,7 @@ export class WorkerPoolService {
     private readonly configService: ConfigService,
     private readonly auditLogger: AuditLoggerService,
     private readonly sessionAffinity: SessionAffinityService,
+    private readonly primePersonalityClient: PrimePersonalityClient,
   ) {
     this.maxWorkers = this.configService.get<number>('MAX_CONCURRENT_REQUESTS', 5);
     this.pythonKernelUrl = this.configService.get<string>('PYTHON_KERNEL_URL', 'http://localhost:8000');
@@ -91,7 +93,7 @@ export class WorkerPoolService {
       );
 
       const ppStartTime = Date.now();
-      const result = await this.callPythonKernelHttpApi(task, timeoutMs);
+      const result = await this.callPrimePersonalityGrpc(task, timeoutMs);
       const ppDuration = Date.now() - ppStartTime;
 
       await this.auditLogger.logPrimePersonalityCompleted(
@@ -136,61 +138,12 @@ export class WorkerPoolService {
     }
   }
 
-  private async callPythonKernelHttpApi(task: RequestTask, timeoutMs: number): Promise<ProcessResult> {
-    const url = `${this.pythonKernelUrl}/v1/execute`;
-    
-    // Get callback URL for gateway webhook
-    const callbackUrl = task.metadata?.callback_url || 
-      `${this.configService.get<string>('GATEWAY_URL', 'http://localhost:3000')}/gateway/webhook/kernel-response`;
-    
-    const requestBody = {
-      request_id: task.requestId,
-      session_id: task.sessionId,
-      user_id: task.userId,
-      priority: task.priority,
-      message: task.body,
-      metadata: task.metadata,
-      callback_url: callbackUrl,
-    };
-
+  private async callPrimePersonalityGrpc(task: RequestTask, timeoutMs: number): Promise<ProcessResult> {
     try {
-      // Node.js 18+ has native fetch
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`HTTP ${response.status}: ${errorText}`);
-      }
-
-      const data = await response.json() as Record<string, any>;
-
-      // Transform response to ProcessResult format
-      return {
-        content: (data.result || data.body || '') as string,
-        actions: (data.actions as any[])?.map((a) => ({
-          type: a.type || 'unknown',
-          skill: a.skill,
-          tool: a.tool,
-          status: a.status || 'completed',
-          durationMs: a.duration_ms || a.durationMs,
-          result: a.result,
-        })) || [],
-        metrics: {
-          totalDurationMs: (data.processing_time_ms || data.metrics?.total_duration_ms) as number,
-          tokenCountInput: (data.token_count_input || data.metrics?.token_count_input) as number,
-          tokenCountOutput: (data.token_count_output || data.metrics?.token_count_output) as number,
-          modelVersion: (data.model_version || data.metrics?.model_version) as string,
-          llmCallsCount: (data.llm_calls_count || data.metrics?.llm_calls_count) as number,
-        },
-      };
+      const result = await this.primePersonalityClient.processRequest(task, timeoutMs);
+      return result;
     } catch (error) {
-      this.logger.error(`Failed to call Python Kernel HTTP API: ${(error as Error).message}`);
+      this.logger.error(`Failed to call Prime Personality gRPC: ${(error as Error).message}`);
       throw error;
     }
   }

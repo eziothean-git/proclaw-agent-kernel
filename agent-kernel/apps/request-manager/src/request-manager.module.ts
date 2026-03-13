@@ -10,6 +10,7 @@ import { RetryHandlerService } from './services/retry-handler.service';
 import { PriorityRequestManagerService } from './services/priority-request-manager.service';
 import { RequestStateService } from './services/request-state.service';
 import { RequestManagerGrpcServer } from './grpc/request-manager.server';
+import { PrimePersonalityClient } from './grpc/prime-personality.client';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { RequestManagerGrpcServer } from './grpc/request-manager.server';
     PriorityRequestManagerService,
     RequestStateService,
     RequestManagerGrpcServer,
+    PrimePersonalityClient,
   ],
   exports: [PriorityRequestManagerService],
 })
