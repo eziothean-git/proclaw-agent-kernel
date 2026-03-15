@@ -12,6 +12,8 @@ pub use app::{
 };
 
 pub use dynamic::{
-    ConfigManager, DebugConfig, DynamicConfig, ExecutorConfig, FeatureFlags, PrimeConfig,
-    get_global_config, init_global_config,
+    ConfigManager, DebugConfig, DynamicConfig, ExecutorConfig, FeatureFlags, OutputFormat,
+    PrimeConfig, XmlConfig, get_global_config, init_global_config,
 };
+
+pub use dynamic::ComposerConfig as DynamicComposerConfig;

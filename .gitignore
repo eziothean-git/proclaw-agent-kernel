@@ -97,3 +97,35 @@ deprecated/
 .sisyphus/boulder.json
 .sisyphus/notepads/
 .sisyphus/drafts/
+.sisyphus/plans/
+
+# Rust build artifacts
+kernel-v2/target/
+kernel-v2/Cargo.lock
+*.rlib
+*.rmeta
+
+# Rust temporary files
+**/*.rs.bk
+*.pdb
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*secret*.txt
+*secret*.json
+*secret*.yaml
+*secret*.yml
+.env.production
+.env.staging
+config/secrets/
+secrets/
+
+# Test data with sensitive info
+test_data/secret.md
+test_data/**/secret*
+
+# Temporary sisyphus files
+.sisyphus/*.md
+!.sisyphus/README.md

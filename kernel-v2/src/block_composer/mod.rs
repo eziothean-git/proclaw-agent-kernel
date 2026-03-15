@@ -2,7 +2,7 @@
 
 pub mod cache;
 
-use crate::config::ComposerConfig;
+use crate::config::{ComposerConfig, OutputFormat};
 use crate::server::proto::{Block, ComposeResponse, Profile};
 use cache::{CacheKey, CacheManager, CachedComposition};
 use chrono::Utc;
@@ -129,6 +129,7 @@ pub struct BlockComposerEngine {
     cache: Arc<CacheManager>,
     block_store: Arc<BlockStore>,
     profiles: HashMap<i32, CompositionProfile>,
+    output_format: OutputFormat,
 }
 
 impl BlockComposerEngine {
@@ -150,7 +151,14 @@ impl BlockComposerEngine {
             cache,
             block_store,
             profiles,
+            output_format: OutputFormat::Markdown,
         })
+    }
+    
+    /// Update output format
+    pub fn set_output_format(&mut self, format: OutputFormat) {
+        info!("Output format set to: {:?}", format);
+        self.output_format = format;
     }
     
     /// Compose blocks into final context
@@ -215,14 +223,12 @@ impl BlockComposerEngine {
         // Calculate total tokens
         let total_tokens = composed.iter().map(|b| b.token_count).sum();
         
-        // Build composed text
-        let mut composed_text = String::new();
-        let mut block_ids_used = Vec::new();
-        
-        for block in &composed {
-            block_ids_used.push(block.block_id.clone());
-            composed_text.push_str(&format!("\n### {}\n{}\n", block.block_id, block.content));
-        }
+        let block_ids_used: Vec<String> = composed.iter().map(|b| b.block_id.clone()).collect();
+        let composed_text = match self.output_format {
+            OutputFormat::Xml => self.compose_xml(&composed, &profile_name),
+            OutputFormat::XmlHybrid => self.compose_xml_hybrid(&composed, &profile_name),
+            OutputFormat::Markdown => self.compose_markdown(&composed),
+        };
         
         // Cache the result
         let ttl_seconds = match profile {
@@ -361,6 +367,65 @@ impl BlockComposerEngine {
         let mut meta = self.block_store.metadata.write().await;
         blocks.clear();
         meta.clear();
+    }
+
+    fn compose_markdown(&self, blocks: &[Block]) -> String {
+        let mut result = String::new();
+        for block in blocks {
+            result.push_str(&format!("\n### {}\n{}\n", block.block_id, block.content));
+        }
+        result
+    }
+
+    fn compose_xml(&self, blocks: &[Block], profile_name: &str) -> String {
+        let mut xml = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<context profile="{}">"#, profile_name);
+        
+        for block in blocks {
+            xml.push_str(&format!(
+                r#"<block id="{}" type="{}" priority="{}">
+<content>{}</content>
+</block>"#,
+                block.block_id,
+                block.block_type,
+                block.priority,
+                Self::escape_xml(&block.content)
+            ));
+        }
+        
+        xml.push_str("\n</context>");
+        xml
+    }
+
+    fn compose_xml_hybrid(&self, blocks: &[Block], profile_name: &str) -> String {
+        let mut xml = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+<context profile="{}">"#, profile_name);
+        
+        for block in blocks {
+            xml.push_str(&format!(
+                r#"<block id="{}" type="{}" priority="{}">
+<![CDATA[
+{}
+]]>
+</block>"#,
+                block.block_id,
+                block.block_type,
+                block.priority,
+                block.content
+            ));
+        }
+        
+        xml.push_str("\n</context>");
+        xml
+    }
+
+    fn escape_xml(content: &str) -> String {
+        content
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&apos;")
     }
 }
 

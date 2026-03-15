@@ -9,11 +9,79 @@ use tokio::sync::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+/// 输出格式枚举
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputFormat {
+    /// Markdown 格式（默认，向后兼容）
+    Markdown,
+    /// XML 结构化格式
+    Xml,
+    /// 混合格式：XML 结构 + CDATA 包裹 Markdown
+    XmlHybrid,
+}
+
+impl Default for OutputFormat {
+    fn default() -> Self {
+        OutputFormat::Markdown
+    }
+}
+
+/// Composer 配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComposerConfig {
+    /// 默认输出格式
+    pub output_format: OutputFormat,
+    
+    /// XML 配置
+    pub xml_config: XmlConfig,
+    
+    /// 提示词资产目录
+    pub assets_path: PathBuf,
+}
+
+impl Default for ComposerConfig {
+    fn default() -> Self {
+        Self {
+            output_format: OutputFormat::Markdown,
+            xml_config: XmlConfig::default(),
+            assets_path: PathBuf::from("./data/prompts"),
+        }
+    }
+}
+
+/// XML 输出配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XmlConfig {
+    /// 是否使用 CDATA 包裹内容
+    pub use_cdata: bool,
+    /// 是否包含元数据属性
+    pub include_attributes: bool,
+    /// 根标签名称
+    pub root_tag: String,
+    /// XML 命名空间
+    pub namespace: Option<String>,
+}
+
+impl Default for XmlConfig {
+    fn default() -> Self {
+        Self {
+            use_cdata: true,
+            include_attributes: true,
+            root_tag: "context".to_string(),
+            namespace: Some("http://proclaw.ai/context".to_string()),
+        }
+    }
+}
+
 /// 动态配置结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DynamicConfig {
     /// Prime Personality 配置
     pub prime: PrimeConfig,
+    
+    /// Composer 配置
+    pub composer: ComposerConfig,
     
     /// 执行器配置
     pub executor: ExecutorConfig,
@@ -29,6 +97,7 @@ impl Default for DynamicConfig {
     fn default() -> Self {
         Self {
             prime: PrimeConfig::default(),
+            composer: ComposerConfig::default(),
             executor: ExecutorConfig::default(),
             debug: DebugConfig::default(),
             features: FeatureFlags::default(),
@@ -243,7 +312,7 @@ impl ConfigManager {
     }
 }
 
-/// 全局配置访问点
+// 全局配置访问点
 lazy_static::lazy_static! {
     static ref GLOBAL_CONFIG: std::sync::Mutex<Option<Arc<ConfigManager>>> = 
         std::sync::Mutex::new(None);

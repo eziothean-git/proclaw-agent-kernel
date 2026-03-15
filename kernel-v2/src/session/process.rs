@@ -16,12 +16,11 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
 use chrono::{DateTime, Utc};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::agent_thread::{
-    models::{ThreadId, ThreadMeta, ThreadStatus, SessionId, ImmutableInput},
+    models::{ThreadId, ThreadStatus, SessionId},
     storage::ThreadStorage,
 };
 

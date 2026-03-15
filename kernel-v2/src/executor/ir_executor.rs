@@ -9,16 +9,15 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{info, warn, error};
 
 use crate::personality::models::{IntermediateRepresentation, ProcessDefinition};
 use crate::session::{
-    process::{ProcessId, ProcessManager},
+    process::{ProcessId},
     skills::SessionHostSkills,
 };
-use crate::agent_thread::models::{ThreadId, SessionId};
+use crate::agent_thread::models::{ThreadId};
 use crate::scheduler::{
     thread_executor::{ExecutorEvent, CompletionReason},
 };
@@ -149,7 +148,7 @@ impl IRProcessExecutor {
         &self,
         process_def: &ProcessDefinition,
         session_id: &str,
-        process_idx: usize,
+        _process_idx: usize,
     ) -> anyhow::Result<ProcessExecutionResult> {
         // 1. 创建 Process
         let process_id = self.session_host_skills.create_process(
@@ -182,7 +181,7 @@ impl IRProcessExecutor {
         
         // 创建事件通道来监控执行
         let (event_tx, mut event_rx) = mpsc::channel::<ExecutorEvent>(100);
-        let (completion_tx, mut completion_rx) = tokio::sync::oneshot::channel::<CompletionReason>();
+        let (completion_tx, completion_rx) = tokio::sync::oneshot::channel::<CompletionReason>();
         
         // 启动事件收集任务
         let mut execution_log = Vec::new();
@@ -244,10 +243,10 @@ impl IRProcessExecutor {
             Ok(log) => log,
             Err(_) => vec![],
         };
-        
+
         // 4. 获取 Process 的最终状态
-        let process_info = self.session_host_skills.get_process_info(&process_id).await;
-        let thread_status = self.session_host_skills.get_thread_in_process_status(&process_id, &thread_id).await;
+        let _process_info = self.session_host_skills.get_process_info(&process_id).await;
+        let _thread_status = self.session_host_skills.get_thread_in_process_status(&process_id, &thread_id).await;
         
         // 5. 从 Thread Storage 读取执行结果
         let (final_answer, artifacts) = self.collect_thread_results(&thread_id).await?;

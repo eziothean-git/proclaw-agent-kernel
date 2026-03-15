@@ -8,7 +8,7 @@ use crate::block_composer::BlockComposerEngine;
 use crate::llm::{LLMRouter, config::DifficultyLevel};
 use crate::server::proto::{Block, Profile};
 
-use super::{IntermediateRepresentation, ProcessDefinition, InputMessage, PrimePersonalityConfig, ConversationContext, ConversationTurn, Content, Attachment, ResourceReference};
+use super::{IntermediateRepresentation, ProcessDefinition, InputMessage, PrimePersonalityConfig, ConversationTurn, Content, Attachment, ResourceReference};
 
 pub struct PrimePersonality {
     config: PrimePersonalityConfig,

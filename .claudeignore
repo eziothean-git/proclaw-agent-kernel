@@ -1,0 +1,229 @@
+# .claudeignore
+# Files and directories that Claude Code should ignore when reading the codebase
+
+# ============================================================================
+# Dependencies and Build Artifacts
+# ============================================================================
+
+# Node.js
+node_modules/
+.pnp
+.pnp.js
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Rust
+kernel-v2/target/
+**/target/debug/
+**/target/release/
+Cargo.lock
+*.rlib
+*.rmeta
+**/*.rs.bk
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+.venv*/
+*.egg-info/
+.pytest_cache/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# ============================================================================
+# Deprecated and Historical Documentation
+# ============================================================================
+
+# Deprecated directory (historical reference only)
+deprecated/
+Documents/deprecated/
+
+# Old Python kernel (completely removed)
+agent-kernel/apps/python-kernel/
+
+# ============================================================================
+# Sensitive Files and Secrets
+# ============================================================================
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.crt
+*secret*.txt
+*secret*.json
+*secret*.yaml
+*secret*.yml
+config/secrets/
+secrets/
+
+# Test data with sensitive info
+test_data/secret.md
+test_data/**/secret*
+
+# API keys and tokens
+*api_key*
+*api-key*
+*apikey*
+*token*.json
+!*token*.example.json
+
+# ============================================================================
+# Data and Database Files
+# ============================================================================
+
+# SQLite databases
+data/*.sqlite3
+data/*.db
+data/*.sqlite
+*.db
+*.sqlite
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Runtime data directories
+agent-kernel/data/
+agent-kernel/apps/gateway/data/
+agent-kernel/apps/request-manager/data/
+kernel-v2/data/
+!**/data/.gitkeep
+
+# Traces and logs
+data/traces/
+**/traces/
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+nohup.out
+
+# ============================================================================
+# Temporary and Cache Files
+# ============================================================================
+
+# Sisyphus temporary files
+.sisyphus/boulder.json
+.sisyphus/notepads/
+.sisyphus/drafts/
+.sisyphus/plans/
+.sisyphus/*.md
+!.sisyphus/README.md
+
+# Cache directories
+.cache/
+.nyc_output/
+coverage/
+temp/
+tmp/
+*.tmp
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Process files
+*.pid
+*.seed
+*.pid.lock
+
+# ============================================================================
+# Generated Files
+# ============================================================================
+
+# Protobuf generated files (regenerated from .proto)
+*_pb.js
+*_grpc_pb.js
+*_pb2.py
+*_pb2_grpc.py
+
+# Rust generated files (from build.rs)
+kernel-v2/target/**/build/**/out/*.rs
+
+# ============================================================================
+# Large or Binary Files
+# ============================================================================
+
+# Compiled binaries
+*.exe
+*.dll
+*.dylib
+*.so
+*.a
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# Media files (if any)
+*.mp4
+*.avi
+*.mov
+*.mp3
+*.wav
+
+# ============================================================================
+# Test and Coverage Reports
+# ============================================================================
+
+# Test coverage
+coverage/
+.nyc_output/
+htmlcov/
+.coverage
+.coverage.*
+
+# Test reports (keep test plans, ignore generated reports)
+**/test-results/
+**/test-output/
+
+# ============================================================================
+# Documentation to Ignore
+# ============================================================================
+
+# Outdated status reports (already in Documents/deprecated/)
+**/COMPILATION_ERRORS*.md
+**/IMPLEMENTATION_STATUS*.md
+**/PHASE*_COMPLETION.md
+**/API_STATUS.md
+
+# Auto-generated documentation
+**/node_modules/**/README.md
+**/target/**/README.md
+
+# ============================================================================
+# Special Cases
+# ============================================================================
+
+# Keep these important files even if they match patterns above
+!CLAUDE.md
+!README.md
+!kernel-v2/README.md
+!agent-kernel/README.md
+!Documents/README.md
+!Documents/*/README.md

@@ -92,6 +92,13 @@ pub enum ExecutorEvent {
     Error {
         message: String,
     },
+    BatchExecutionStarted {
+        task_count: usize,
+    },
+    BatchExecutionCompleted {
+        completed: usize,
+        interrupted: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -333,6 +340,53 @@ impl ThreadExecutor {
                 self.state = ExecutorState::Paused;
                 return Ok(false);
             }
+            IntentType::BatchExecution => {
+                if let Some(tasks) = intent.batch_tasks {
+                    let _ = self.event_tx.send(ExecutorEvent::BatchExecutionStarted {
+                        task_count: tasks.len(),
+                    }).await;
+                    
+                    let batch_executor = crate::scheduler::batch_task_executor::BatchTaskExecutor::new();
+                    let config = crate::scheduler::time_budget_monitor::TimeBudgetConfig::default();
+                    
+                    let sub_tasks: Vec<_> = tasks.into_iter().enumerate().map(|(i, process)| {
+                        crate::scheduler::batch_task_executor::SubTaskRequest {
+                            task_id: format!("batch_task_{}", i),
+                            process,
+                            depth: 0,
+                        }
+                    }).collect();
+                    
+                    let meta = self.storage.read_meta().await?;
+                    match batch_executor.execute_with_budget(
+                        meta.session_id.0.clone(),
+                        sub_tasks,
+                        config,
+                    ).await {
+                        Ok(result) => {
+                            let _ = self.event_tx.send(ExecutorEvent::BatchExecutionCompleted {
+                                completed: result.completed_tasks.len(),
+                                interrupted: result.interrupted_tasks.len(),
+                            }).await;
+                            
+                            let artifact = crate::agent_thread::models::ArtifactSlot::new(
+                                crate::agent_thread::models::ArtifactType::Custom("BatchResult".to_string()),
+                                serde_json::json!({
+                                    "system_notice": result.system_notice,
+                                    "summary": result.summary,
+                                    "time_budget_exceeded": result.time_budget_exceeded,
+                                }),
+                                10,
+                                self.current_step,
+                            );
+                            self.storage.save_artifact(&artifact).await?;
+                        }
+                        Err(e) => {
+                            error!("Batch execution failed: {}", e);
+                        }
+                    }
+                }
+            }
             IntentType::Error => {
                 return Err(anyhow::anyhow!("Agent error: {:?}", intent.error_message));
             }
@@ -474,6 +528,7 @@ pub enum IntentType {
     PhaseTransition,
     FinalAnswer,
     Clarification,
+    BatchExecution,
     Error,
 }
 
@@ -489,6 +544,7 @@ pub struct ParsedIntent {
     pub final_answer: Option<String>,
     pub clarification_request: Option<String>,
     pub error_message: Option<String>,
+    pub batch_tasks: Option<Vec<crate::personality::models::ProcessDefinition>>,
 }
 
 /// Phase 转换意图

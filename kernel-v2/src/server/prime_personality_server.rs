@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
-use tracing::{info, instrument, warn};
+use tracing::{info, warn};
 
 use crate::personality::{PrimePersonality as PrimePersonalityCore, InputMessage, IntermediateRepresentation};
 use crate::coordinator::skill_registry::SkillRegistry;
@@ -89,8 +89,14 @@ impl PrimePersonalityService {
             },
         };
 
+        #[cfg(feature = "control-plane")]
         let result = self.skill_registry
             .execute_control(skill_request, CapabilityLevel::Prime)
+            .await?;
+
+        #[cfg(not(feature = "control-plane"))]
+        let result = self.skill_registry
+            .execute_agent(skill_request)
             .await?;
 
         if result.success {
@@ -311,7 +317,7 @@ impl PrimePersonalityService {
 
 /// 转换 Proto InputMessage 到内部类型
 fn convert_proto_to_input(proto: ProtoInputMessage) -> InputMessage {
-    use crate::personality::{InputHeader, InputMetadata, AttachmentMetadata, ConversationContext, ConversationTurn};
+    use crate::personality::{InputHeader, ConversationContext, ConversationTurn};
 
     let header = proto.header.map(|h| InputHeader {
         timestamp: h.timestamp,

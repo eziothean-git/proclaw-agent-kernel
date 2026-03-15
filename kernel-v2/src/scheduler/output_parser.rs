@@ -71,6 +71,7 @@ impl OutputParser {
                     final_answer: None,
                     clarification_request: None,
                     error_message: None,
+                    batch_tasks: None,
                 })
             }
             "phase_transition" => {
@@ -85,6 +86,7 @@ impl OutputParser {
                     final_answer: None,
                     clarification_request: None,
                     error_message: None,
+                    batch_tasks: None,
                 })
             }
             "final_answer" | "answer" => {
@@ -102,6 +104,7 @@ impl OutputParser {
                     final_answer: Some(answer),
                     clarification_request: None,
                     error_message: None,
+                    batch_tasks: None,
                 })
             }
             "clarification" => {
@@ -119,6 +122,7 @@ impl OutputParser {
                     final_answer: None,
                     clarification_request: Some(question),
                     error_message: None,
+                    batch_tasks: None,
                 })
             }
             _ => Err(anyhow::anyhow!("Unknown intent type: {}", intent_type)),
@@ -166,6 +170,7 @@ impl OutputParser {
                 final_answer: Some(output.to_string()),
                 clarification_request: None,
                 error_message: None,
+                batch_tasks: None,
             });
         }
         
@@ -183,6 +188,7 @@ impl OutputParser {
                 final_answer: None,
                 clarification_request: Some(output.to_string()),
                 error_message: None,
+                batch_tasks: None,
             });
         }
         
@@ -197,6 +203,7 @@ impl OutputParser {
             final_answer: None,
             clarification_request: None,
             error_message: None,
+            batch_tasks: None,
         })
     }
     

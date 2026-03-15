@@ -1,0 +1,112 @@
+# Agent Kernel 动态配置文件
+# 路径: ./data/config/dynamic.yaml
+# 支持热重载：修改后自动生效
+
+# Prime Personality 配置
+prime:
+  # 启用意图强制修正（关键词匹配）
+  enable_intent_override: true
+  
+  # 意图关键词映射
+  intent_keywords:
+    file_operation:
+      - "读取文件"
+      - "read file"
+      - "查看文件"
+      - "文件内容"
+      - "/home/"
+      - "/data/"
+      - ".md"
+      - ".txt"
+      - "cat "
+      - "list"
+      - "ls "
+      - "show file"
+      - "display file"
+    
+    shell_execution:
+      - "执行命令"
+      - "execute"
+      - "run command"
+      - "bash"
+      - "sh "
+      - "运行脚本"
+      - "execute script"
+    
+    code_generation:
+      - "生成代码"
+      - "generate code"
+      - "write function"
+      - "create class"
+      - "implement"
+    
+    analysis:
+      - "分析"
+      - "analyze"
+      - "review"
+      - "检查"
+      - "check"
+  
+  # 系统提示词附加内容（追加到默认提示词后）
+  system_prompt_appendix: ""
+  
+  # 温度参数覆盖（覆盖默认 0.3）
+  # temperature_override: 0.2
+
+# Composer 配置（XML/Markdown 输出格式）
+composer:
+  # 输出格式选项：markdown | xml | xml_hybrid
+  # - markdown: 现有格式，向后兼容
+  # - xml: 纯 XML 结构化格式
+  # - xml_hybrid: XML + CDATA 包裹 Markdown（推荐）
+  output_format: xml_hybrid
+  
+  # XML 格式详细配置
+  xml_config:
+    # 使用 CDATA 包裹内容（避免 XML 转义）
+    use_cdata: true
+    # 在标签中包含元数据属性
+    include_attributes: true
+    # 根标签名称
+    root_tag: "context"
+    # XML 命名空间
+    namespace: "http://proclaw.ai/context"
+  
+  # 提示词资产目录
+  assets_path: "./data/prompts"
+
+# 执行器配置
+executor:
+  # 默认超时时间（秒）
+  default_timeout_seconds: 300
+  
+  # 最大执行步数
+  max_steps: 100
+  
+  # 启用详细日志
+  verbose_logging: true
+
+# 调试配置
+debug:
+  # 打印 Prime 的 prompt（调试用）
+  print_prime_prompt: false
+  
+  # 打印 Prime 的 response（调试用）
+  print_prime_response: false
+  
+  # 保存所有 IR 到文件
+  save_ir_to_file: false
+  
+  # IR 保存路径
+  ir_save_path: "./debug/ir"
+
+# 功能开关
+features:
+  # 启用 IR Process Executor
+  enable_ir_executor: true
+  
+  # 启用 Phase 3（Prime 第二轮迭代）
+  enable_phase_3: true
+  
+  # 启用自动意图修正
+  enable_auto_intent_fix: false

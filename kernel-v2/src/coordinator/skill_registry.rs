@@ -8,16 +8,14 @@
 //! - Agent (P3): 只能访问基础 Skills（Bash 等）
 
 use std::sync::Arc;
-use tracing::{info, instrument, warn};
+use tracing::{info, instrument};
 
-use crate::auth::CapabilityLevel;
 use crate::coordinator::models::{SkillRequest, SkillResult};
 use crate::skills::BashSkill;
 use crate::skills::GatewaySkill;
 #[cfg(feature = "control-plane")]
 use crate::skills::{OSInterfaceSkill, SchedulerSkill};
 
-use tokio::sync::RwLock;
 
 /// Skill 注册表
 pub struct SkillRegistry {

@@ -22,13 +22,13 @@ use crate::coordinator::{
     skill_registry::SkillRegistry,
     ticket::TicketTracker,
 };
-use crate::skills::{BashSkill, ComposerSkill};
+use crate::skills::{BashSkill};
 use crate::llm::{LLMRouter, config::LLMRouterConfig};
 use crate::scheduler::{
     ContextBuilder, OutputParser, ThreadExecutor, ExecutorState, ExecutorEvent as SchedulerExecutorEvent,
-    thread_manager::ThreadManager,
 };
-use crate::session::{process::ProcessManager, SessionHostSkills};
+#[cfg(feature = "control-plane")]
+use crate::scheduler::thread_manager::ThreadManager;
 use crate::personality::{PrimePersonality, PrimePersonalityConfig};
 #[cfg(feature = "control-plane")]
 use crate::skills::{OSInterfaceSkill, SchedulerSkill};

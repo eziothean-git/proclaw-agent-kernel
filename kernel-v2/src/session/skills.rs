@@ -14,21 +14,19 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::agent_thread::{
-    models::{SessionId, ThreadId, ThreadStatus, ImmutableInput},
+    models::{SessionId, ThreadId, ImmutableInput},
     storage::ThreadStorage,
 };
 use crate::block_composer::BlockComposerEngine;
 use crate::coordinator::ExecutionCoordinator;
 use crate::llm::{
     LLMRouter,
-    config::{LLMRouterConfig, DifficultyLevel},
+    config::DifficultyLevel,
 };
 use crate::scheduler::{
     ContextBuilder, OutputParser, ThreadExecutor, ExecutorEvent,
 };
-use crate::session::{
-    process::{Process, ProcessId, ProcessManager},
-};
+use crate::session::process::{ProcessId, ProcessManager};
 
 /// Session Host SKILL 集合
 pub struct SessionHostSkills {
@@ -189,7 +187,7 @@ impl SessionHostSkills {
         );
         
         // 1. 获取 Process
-        let mut manager = self.process_manager.write().await;
+        let manager = self.process_manager.write().await;
         let process = manager.get_process(process_id)
             .ok_or_else(|| anyhow::anyhow!("Process not found"))?
             .meta()
