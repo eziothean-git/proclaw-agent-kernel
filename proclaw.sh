@@ -78,7 +78,7 @@ start_prime() {
         --data-dir ./data \
         --llm-api-key "ca199063-af7d-4d99-9613-40bdc4c82831" \
         --llm-base-url "https://ark.cn-beijing.volces.com/api/v3" \
-        --llm-model "doubao-pro-4k-functioncall-240515" \
+        --llm-model "glm-4-7-251222" \
         > /tmp/prime.log 2>&1 &
     
     # Wait for startup

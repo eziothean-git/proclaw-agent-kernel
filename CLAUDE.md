@@ -233,6 +233,56 @@ The system requires an OpenAI-compatible API:
 - Default model: `gpt-4`
 - Default base URL: `https://api.openai.com/v1`
 
+**Current Working Configuration (ARK API):**
+- API Base URL: `https://ark.cn-beijing.volces.com/api/v3`
+- Working Model: `glm-4-7-251222` (verified functional)
+- Alternative Models: `deepseek-v3-241226`, `doubao-pro-32k-functioncall-241028`, `kimi-k2-250905`
+- To get available models: `curl -s https://ark.cn-beijing.volces.com/api/v3/models -H "Authorization: Bearer <key>" | jq -r '.data[].id'`
+
+## Service Management
+
+### Using proclaw.sh Script (Recommended)
+
+The `proclaw.sh` script in the project root manages all services:
+
+```bash
+# Start all services (Gateway, Prime Personality, Request Manager)
+./proclaw.sh start
+
+# Stop all services gracefully
+./proclaw.sh stop
+
+# Force kill all services
+./proclaw.sh kill
+
+# Restart all services
+./proclaw.sh restart
+
+# Check service status
+./proclaw.sh status
+
+# View logs
+./proclaw.sh logs prime           # Rust kernel logs
+./proclaw.sh logs gateway          # Gateway logs
+./proclaw.sh logs request-manager  # Request Manager logs
+
+# Clear all logs
+./proclaw.sh clear-logs
+
+# Test system with sample request
+./proclaw.sh test
+```
+
+**Service Ports:**
+- Prime Personality (Rust): `127.0.0.1:50051`
+- Gateway (TypeScript): `http://localhost:3000`
+- Request Manager (TypeScript): `127.0.0.1:50052`
+
+**Log Files:**
+- Prime: `/tmp/prime.log`
+- Gateway: `/tmp/gateway.log`
+- Request Manager: `/tmp/request-manager.log`
+
 ### Recent Development Focus
 Based on git status, current work includes:
 - Batch execution with parallel task processing
@@ -249,3 +299,63 @@ Files being actively developed:
 - `src/scheduler/snapshot_collector.rs`
 - `src/scheduler/xml_parser.rs`
 - `src/scheduler/xml_models.rs`
+
+## Common Issues and Troubleshooting
+
+### Compilation Errors
+
+**Issue: Missing `batch_tasks` field in ParsedIntent**
+- **Cause:** Struct definition updated but initializers not updated
+- **Solution:** Add `batch_tasks: None` to all `ParsedIntent` initializers
+
+**Issue: `anyhow::Error` doesn't implement Clone**
+- **Cause:** Deriving `Clone` on structs containing `anyhow::Result`
+- **Solution:** Remove `Clone` derive or use `Arc<anyhow::Error>`
+
+**Issue: Module not found (feature-gated)**
+- **Cause:** Module gated behind feature flag but imported unconditionally
+- **Solution:** Add `#[cfg(feature = "...")]` to import
+
+### Runtime Issues
+
+**Issue: Model not found error from ARK API**
+- **Cause:** Model name doesn't exist or no access
+- **Solution:** Query available models:
+  ```bash
+  curl -s https://ark.cn-beijing.volces.com/api/v3/models \
+    -H "Authorization: Bearer <key>" | jq -r '.data[].id'
+  ```
+
+**Issue: Services won't start**
+- **Cause:** Ports already in use or permission issues
+- **Solution:**
+  ```bash
+  ./proclaw.sh kill  # Force kill existing processes
+  ./proclaw.sh start # Restart
+  ```
+
+**Issue: Gateway fails with EACCES mkdir '/var/gateway'**
+- **Cause:** No permission to create /var/gateway
+- **Solution:** Use `proclaw.sh` which sets correct data directories
+
+### Development Tips
+
+1. **Always check feature gates** when encountering "not found" errors
+2. **Use `proclaw.sh` for service management** instead of manual starts
+3. **Check logs** in `/tmp/` for debugging: `prime.log`, `gateway.log`, `request-manager.log`
+4. **Verify model availability** before configuring LLM settings
+5. **Use `cargo fix --lib --allow-dirty`** to auto-fix simple warnings
+
+## Recent Fixes (2026-03-15)
+
+- ✅ Fixed 22 compilation errors across scheduler, executor, and server modules
+- ✅ Resolved missing `batch_tasks` field in ParsedIntent (8 locations)
+- ✅ Fixed Clone trait issues in parallel executor
+- ✅ Corrected function signature mismatches in multi-session orchestrator
+- ✅ Added proper feature gates for conditional compilation
+- ✅ Cleaned up 20+ unused imports
+- ✅ Verified end-to-end functionality with ARK API (glm-4-7-251222 model)
+- ✅ Updated proclaw.sh with working configuration
+
+See `Documents/2026-03-15-rust-kernel-fixes.md` for detailed fix documentation.
+
