@@ -24,6 +24,12 @@
 //!     config:
 //!       max_events: 10
 //! ```
+//!
+//! # Provider-Specific Caching
+//!
+//! The composer supports multiple LLM provider caching strategies:
+//! - **Claude**: Uses `cache_control` parameter for explicit cache boundaries
+//! - **OpenAI-compatible**: Uses system message for prefix caching
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -32,6 +38,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use super::app::{PromptComposition, ContextSlotPreset, SlotSourceType};
+use crate::llm::models::{CacheAwareMessage, CacheControl, LLMProvider};
 
 /// 执行上下文 - 传递给 PromptComposer 用于构建动态内容
 #[derive(Debug, Clone, Default)]
@@ -84,16 +91,81 @@ impl ComposedPrompt {
 
     /// 生成带缓存标记的 prompt（用于支持 prompt caching 的 API）
     pub fn to_cached_prompt(&self) -> CachedPrompt {
-        let dynamic_content: String = self.dynamic_parts.iter()
-            .filter(|(_, c)| !c.is_empty())
-            .map(|(_, c)| c.as_str())
-            .collect::<Vec<_>>()
-            .join(&self.separator);
+        let dynamic_content = self.to_dynamic_content();
 
         CachedPrompt {
             cached_content: self.static_part.clone(),
             dynamic_content,
         }
+    }
+
+    /// 生成动态部分内容
+    pub fn to_dynamic_content(&self) -> String {
+        self.dynamic_parts
+            .iter()
+            .filter(|(_, c)| !c.is_empty())
+            .map(|(_, c)| c.as_str())
+            .collect::<Vec<_>>()
+            .join(&self.separator)
+    }
+
+    /// 生成 Claude 格式的消息（使用 cache_control）
+    ///
+    /// Claude 支持在消息中使用 `cache_control` 参数来标记缓存边界。
+    /// 结构：
+    /// 1. User message with static content (cache_control: persistent)
+    /// 2. Assistant message acknowledging
+    /// 3. User message with dynamic content (cache_control: ephemeral)
+    pub fn to_claude_messages(&self) -> Vec<CacheAwareMessage> {
+        vec![
+            // 静态部分作为第一个 user message，标记为持久缓存
+            CacheAwareMessage::user(&self.static_part)
+                .with_cache_control(CacheControl::Persistent),
+            // 助手确认消息（帮助 Claude 理解上下文）
+            CacheAwareMessage::assistant("Understood. I'm ready to help."),
+            // 动态部分作为后续 user message，标记为短期缓存
+            CacheAwareMessage::user(&self.to_dynamic_content())
+                .with_cache_control(CacheControl::Ephemeral),
+        ]
+    }
+
+    /// 生成 OpenAI 兼容格式的消息（system + user）
+    ///
+    /// OpenAI 兼容 API 通常会自动缓存 system message 前缀。
+    /// 结构：
+    /// 1. System message with static content
+    /// 2. User message with dynamic content
+    pub fn to_openai_messages(&self) -> Vec<CacheAwareMessage> {
+        vec![
+            // 静态部分作为 system message（自动被 provider 缓存）
+            CacheAwareMessage::system(&self.static_part),
+            // 动态部分作为 user message
+            CacheAwareMessage::user(&self.to_dynamic_content()),
+        ]
+    }
+
+    /// 根据提供商类型生成对应格式的消息
+    pub fn to_messages_for_provider(&self, provider: LLMProvider) -> Vec<CacheAwareMessage> {
+        if provider.supports_cache_control() {
+            self.to_claude_messages()
+        } else {
+            self.to_openai_messages()
+        }
+    }
+
+    /// 获取静态部分的估算 token 数量
+    pub fn static_token_estimate(&self) -> usize {
+        self.cache_hint.static_token_count
+    }
+
+    /// 获取动态部分的估算 token 数量
+    pub fn dynamic_token_estimate(&self) -> usize {
+        estimate_tokens(&self.to_dynamic_content())
+    }
+
+    /// 获取总 token 估算
+    pub fn total_token_estimate(&self) -> usize {
+        self.static_token_estimate() + self.dynamic_token_estimate()
     }
 }
 
@@ -734,9 +806,16 @@ impl PromptComposer {
     }
 }
 
-/// 估算文本的 token 数量（简单实现：4 字符 ≈ 1 token）
+/// 估算文本的 token 数量
+///
+/// 使用 tiktoken 进行精确计数，如果不可用则使用简单估算
 fn estimate_tokens(text: &str) -> usize {
-    text.len() / 4
+    // 尝试使用 tiktoken 精确计数
+    // 如果 tiktoken 初始化失败，使用简单估算
+    match crate::utils::TokenCounter::global().count_tokens(text) {
+        count if count > 0 => count,
+        _ => text.len() / 4, // 简单估算：4 字符 ≈ 1 token
+    }
 }
 
 #[cfg(test)]

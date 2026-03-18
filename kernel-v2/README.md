@@ -1,64 +1,89 @@
-# ProClaw BlockComposer
+# ProClaw Kernel v2
 
-高性能上下文合成服务，为 Agent Kernel 提供文本块组装能力。
+Rust 实现的高性能 Agent Kernel，包含 Prime Personality、BlockComposer 和 Thread Executor。
 
-## 架构
+## 架构概览
 
-- **L1 Cache**: 内存 LRU 缓存 (1000 entries)
-- **L2 Cache**: SQLite 持久化缓存
-- **Providers**: Bash、Code、Memory、File 数据提供者
-- **权限**: Capability Token + Policy Engine
-- **可观测性**: Prometheus 指标、Trace、审计日志
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     TypeScript Gateway                           │
+│                    (HTTP API on :3000)                          │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Prime Personality (Rust)                      │
+│                    (gRPC on :50051)                              │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
+│  │   LLM       │  │   Block     │  │   IR Process Executor   │  │
+│  │   Router    │  │   Composer  │  │                         │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      Thread Executor                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
+│  │   Skills    │  │   Session   │  │   Scheduler             │  │
+│  │   Registry  │  │   Host      │  │                         │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## 三层 gRPC 服务架构
+
+1. **BlockComposer** (Unix socket: `/tmp/proclaw/composer.sock`)
+   - 上下文组装和缓存服务
+   - L1 (内存 LRU) + L2 (SQLite) 两级缓存
+   - 提供 Session/Task/Prime 级别的上下文块
+
+2. **AgentKernel** (同上)
+   - 核心代理执行服务
+   - 管理会话、进程和线程
+   - 协调技能执行
+
+3. **PrimePersonality** (TCP: `127.0.0.1:50051`)
+   - 无状态编排层
+   - LLM 驱动的决策
+   - XML/JSON 通信协议
+
+## Prompt 缓存优化
+
+### 静态/动态分离架构
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  SYSTEM MESSAGE (可缓存 - ~2000 tokens, 70-80%)                 │
+├─────────────────────────────────────────────────────────────────┤
+│  Tier 1: 核心身份 (~300 tokens) - 缓存命中率 95%+               │
+│  Tier 2: 能力定义 (~400 tokens) - 缓存命中率 90%                 │
+│  Tier 3: 输出规范 (~500 tokens) - 缓存命中率 80%                 │
+│  Tier 4: 行为规则 (~300 tokens) - 缓存命中率 60%                 │
+│  Tier 5: Few-shot 示例 (~500 tokens) - 缓存命中率 40%            │
+├─────────────────────────────────────────────────────────────────┤
+│  USER MESSAGE (不缓存 - 每次请求变化)                           │
+│  - current_state, task_goal, execution_history                  │
+│  - artifacts, tool_results, error_context                       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Provider 特定缓存策略
+
+| Provider  | 策略              | 说明                              |
+|-----------|-------------------|-----------------------------------|
+| Claude    | `cache_control`   | 使用 `persistent`/`ephemeral` 参数 |
+| DeepSeek  | system_prefix     | System message 自动缓存           |
+| Kimi      | system_prefix     | System message 自动缓存           |
+| GLM       | system_prefix     | System message 自动缓存           |
+| MiniMax   | system_prefix     | System message 自动缓存           |
+
+### 预期收益
+
+- 缓存命中率: >80% (相同 session 内)
+- Token 成本降低: 40-60%
+- 响应延迟降低: 20-30% (缓存命中时)
 
 ## 快速开始
-
-### 1. 安装依赖
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install -y ripgrep ast-grep tree-sitter-cli
-
-# Arch
-sudo pacman -S ripgrep ast-grep tree-sitter
-```
-
-### 2. 创建用户和目录
-
-```bash
-sudo useradd -r -s /bin/false proclaw
-sudo mkdir -p /var/lib/proclaw /var/log/proclaw /run/proclaw /etc/proclaw
-sudo chown -R proclaw:proclaw /var/lib/proclaw /var/log/proclaw /run/proclaw
-```
-
-### 3. 安装二进制
-
-```bash
-sudo cp target/release/proclaw-composer /usr/local/bin/
-sudo cp target/release/proclaw-indexer /usr/local/bin/
-```
-
-### 4. 配置
-
-```bash
-sudo cp config/composer.yaml.example /etc/proclaw/composer.yaml
-# 编辑配置文件
-sudo nano /etc/proclaw/composer.yaml
-```
-
-### 5. 启动服务
-
-```bash
-# 使用 systemd
-sudo cp config/proclaw-composer.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable proclaw-composer
-sudo systemctl start proclaw-composer
-
-# 或手动启动（开发模式）
-RUST_LOG=debug ./target/debug/proclaw-composer --config ./config/composer.yaml
-```
-
-## 开发
 
 ### 构建
 
@@ -68,7 +93,7 @@ cd kernel-v2
 # Debug build
 cargo build
 
-# Release build
+# Release build (优化)
 cargo build --release
 
 # Run tests
@@ -78,92 +103,168 @@ cargo test
 cargo bench
 ```
 
-### 生成 gRPC 代码
+### 运行
 
 ```bash
-# Install protoc and tonic
-sudo apt-get install -y protobuf-compiler
-cargo install tonic-build
+# 使用默认配置
+cargo run -- --config /etc/proclaw/composer.yaml --llm-api-key <key>
 
-# Generate code (automatic in build.rs)
-cargo build
+# 覆盖设置
+cargo run -- \
+  --socket /tmp/proclaw.sock \
+  --data-dir ./data \
+  --llm-api-key $OPENAI_API_KEY \
+  --llm-model gpt-4 \
+  --llm-base-url https://api.openai.com/v1
 ```
 
-### 项目结构
+### 服务管理
+
+```bash
+# 使用 proclaw.sh 脚本（推荐）
+./proclaw.sh start    # 启动所有服务
+./proclaw.sh stop     # 停止所有服务
+./proclaw.sh restart  # 重启所有服务
+./proclaw.sh status   # 检查服务状态
+./proclaw.sh logs prime  # 查看 Rust kernel 日志
+```
+
+**服务端口:**
+- Prime Personality (Rust): `127.0.0.1:50051`
+- Gateway (TypeScript): `http://localhost:3000`
+- Request Manager (TypeScript): `127.0.0.1:50052`
+
+## 项目结构
 
 ```
 kernel-v2/
-├── Cargo.toml           # Rust project config
-├── proto/               # Protocol Buffers
-│   └── block_composer.proto
+├── Cargo.toml              # Rust project config
+├── proto/                  # Protocol Buffers
+│   ├── block_composer.proto
+│   ├── agent_kernel.proto
+│   └── prime_personality.proto
 ├── src/
-│   ├── main.rs          # Entry point
-│   ├── server.rs        # gRPC server
-│   ├── config.rs        # Configuration
-│   ├── block_composer/  # Core composition engine
-│   ├── providers/       # Data providers
-│   │   ├── bash.rs
-│   │   ├── code.rs
-│   │   ├── memory.rs
-│   │   └── file.rs
-│   ├── auth/            # Authentication & permissions
-│   └── observability/   # Metrics & tracing
-├── config/              # Configuration templates
-└── tests/               # Integration tests
+│   ├── main.rs             # Entry point
+│   ├── server/             # gRPC servers
+│   │   ├── prime_personality_server.rs
+│   │   ├── agent_kernel_server.rs
+│   │   └── block_composer_server.rs
+│   ├── config/             # Configuration & Prompt Composer
+│   │   ├── app.rs
+│   │   ├── prompt_composer.rs
+│   │   └── dynamic.rs
+│   ├── personality/        # Prime Personality
+│   │   ├── prime.rs
+│   │   └── models.rs
+│   ├── scheduler/          # Thread Executor
+│   │   ├── thread_executor.rs
+│   │   ├── batch_task_executor.rs
+│   │   └── multi_session_orchestrator.rs
+│   ├── session/            # Session & Process Management
+│   ├── executor/           # IR Process Executor
+│   ├── llm/                # LLM Client & Router
+│   │   ├── client.rs
+│   │   ├── router.rs
+│   │   └── models.rs       # CacheAwareMessage, CacheControl
+│   ├── skills/             # Skill implementations
+│   │   ├── bash_skill.rs
+│   │   ├── gateway_skill.rs
+│   │   └── composer_skill.rs
+│   ├── utils/              # Utilities
+│   │   └── token_counter.rs  # Tiktoken integration
+│   └── observability/      # Metrics & Tracing
+│       └── cache_metrics.rs  # Cache hit rate metrics
+├── prompts/                # Prompt assets
+│   ├── compositions/       # YAML composition configs
+│   │   ├── prime.yaml
+│   │   └── thread.yaml
+│   └── assets/             # Markdown prompt fragments
+│       ├── identity/
+│       ├── capabilities/
+│       ├── schemas/
+│       ├── rules/
+│       └── examples/
+├── config/                 # Configuration templates
+└── tests/                  # Integration tests
 ```
 
 ## API
 
 ### gRPC 服务
 
-服务通过 Unix socket 暴露：`/run/proclaw/composer.sock`
+**PrimePersonality** (TCP :50051):
+- `ProcessRequest`: 处理用户请求，返回 IR
+- `HealthCheck`: 健康检查
 
-主要方法：
+**BlockComposer** (Unix socket):
+- `Compose`: 组装上下文块
+- `QueryBlocks`: 查询块
+- `GetMetrics`: Prometheus 指标
 
-- `Compose`: 组装 blocks 为最终上下文
-- `QueryBlocks`: 查询 blocks（Session Host）
-- `ExecuteBash`: 执行授权的 bash 命令（Thread）
-- `QueryCode`: 代码查询（Thread）
-- `GetMetrics`: 获取 Prometheus 指标
+### HTTP API (via Gateway)
 
-### 示例客户端
+```
+POST /api/v1/chat
+{
+  "message": "用户消息",
+  "session_id": "session-id",
+  "user_id": "user-id",
+  "priority": 10
+}
 
-```python
-import grpc
-from proclaw.block_composer.v1 import block_composer_pb2, block_composer_pb2_grpc
+Response:
+{
+  "requestId": "uuid",
+  "sessionId": "session-id",
+  "status": "accepted"
+}
+```
 
-channel = grpc.insecure_channel("unix:///run/proclaw/composer.sock")
-stub = block_composer_pb2_grpc.BlockComposerStub(channel)
+### 查询请求状态
 
-request = block_composer_pb2.ComposeRequest(
-    session_id="sess_123",
-    task_id="task_456",
-    profile=block_composer_pb2.SESSION,
-    block_types=[block_composer_pb2.SESSION_CONTEXT]
-)
+```
+GET /api/v1/requests/{requestId}
 
-response = stub.Compose(request)
-print(f"Composed: {response.composed_text}")
+Response:
+{
+  "requestId": "uuid",
+  "status": "completed",
+  "response": {
+    "body": "响应内容"
+  }
+}
 ```
 
 ## 配置
 
-### 环境变量
+### YAML 配置 (composer.yaml)
 
-- `RUST_LOG`: 日志级别 (debug, info, warn, error)
-- `COMPOSER_SOCKET_PATH`: Socket 路径
-- `COMPOSER_DATA_DIR`: 数据目录
-- `COMPOSER_SECRET_KEY`: Token 签名密钥
+```yaml
+server:
+  socket_path: /tmp/proclaw/composer.sock
+  workers: 4
 
-### 权限
+cache:
+  l1_max_entries: 1000
+  l2_path: ./data/cache.db
 
-BlockComposer 使用三层权限模型：
+observability:
+  metrics:
+    enabled: true
+    port: 9090
+    path: /metrics
+```
 
-- **System**: 完全访问
-- **Session**: 读文件、查询 memory、组装 blocks
-- **Thread**: 受限 bash、代码查询（需授权 Token）
+### CLI 参数
 
-Token 通过 Capability Token（JWT-like）传递，包含 scope、过期时间、调用次数限制。
+| 参数              | 说明                    | 默认值                           |
+|-------------------|-------------------------|----------------------------------|
+| `--config`        | 配置文件路径            | `/etc/proclaw/composer.yaml`     |
+| `--socket`        | Unix socket 路径        | 从配置文件读取                   |
+| `--data-dir`      | 数据目录                | `./data`                         |
+| `--llm-api-key`   | LLM API 密钥            | 从环境变量 `OPENAI_API_KEY`      |
+| `--llm-model`     | LLM 模型                | `gpt-4`                          |
+| `--llm-base-url`  | LLM API 基础 URL        | `https://api.openai.com/v1`      |
 
 ## 监控
 
@@ -172,26 +273,64 @@ Token 通过 Capability Token（JWT-like）传递，包含 scope、过期时间�
 访问 `http://localhost:9090/metrics`：
 
 ```
-block_composer_cache_hits_total{profile="prime"} 15234
-block_composer_latency_seconds_bucket{le="0.01"} 12000
+# 缓存指标
+proclaw_cache_hits_total{provider="deepseek"} 1234
+proclaw_cache_misses_total{provider="deepseek"} 56
+proclaw_cache_tokens_saved{provider="deepseek"} 45678
+proclaw_cache_hit_rate{provider="deepseek"} 0.96
+
+# 组装延迟
+proclaw_composition_latency_seconds_bucket{le="0.01"} 12000
 ```
 
 ### 日志
 
-- 应用日志: `journalctl -u proclaw-composer`
-- 审计日志: `/var/log/proclaw/audit.log`
+```bash
+# 查看 Prime 日志
+tail -f /tmp/prime.log
 
-### Trace
+# 查看 Gateway 日志
+tail -f /tmp/gateway.log
+```
 
-Trace 文件保存在 `/var/lib/proclaw/traces/`，格式为 JSON Lines。
+## 测试
 
-## 性能
+### 单元测试
 
-目标指标：
+```bash
+cargo test --lib
+
+# 特定模块
+cargo test --lib config::prompt_composer
+cargo test --lib llm::models
+cargo test --lib observability::cache_metrics
+```
+
+### 集成测试
+
+```bash
+cargo test --test integration_test
+cargo test --test full_chain_integration_test
+```
+
+### 端到端测试
+
+```bash
+# 启动服务
+./proclaw.sh start
+
+# 发送测试请求
+curl -s -X POST http://localhost:3000/api/v1/chat \
+    -H "Content-Type: application/json" \
+    -d '{"message": "你好", "session_id": "test", "user_id": "test"}' | jq .
+```
+
+## 性能目标
 
 - Block composition latency: <10ms
 - Cache hit rate: >90%
 - Memory usage per session: <50MB
+- Prompt cache token savings: 40-60%
 
 ## 许可证
 

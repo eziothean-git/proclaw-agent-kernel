@@ -12,6 +12,7 @@ pub mod scheduler;
 pub mod server;
 pub mod session;
 pub mod skills;
+pub mod utils;
 
 // Re-export config types for convenience
 pub use config::dynamic as dynamic_config;

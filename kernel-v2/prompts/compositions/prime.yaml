@@ -1,29 +1,58 @@
 name: prime
 description: "Prime Personality System Prompt - Orchestrator that transforms user intentions into executable plans with static/dynamic context separation"
-version: "2.0"
+version: "3.0"
 
-# 静态部分（可被 LLM provider 缓存）
+# 缓存配置（新增）
+cache_config:
+  default_strategy: auto
+  providers:
+    claude:
+      strategy: persistent
+      ttl_seconds: 300
+    deepseek:
+      strategy: system_prefix
+    kimi:
+      strategy: system_prefix
+    glm:
+      strategy: system_prefix
+    minimax:
+      strategy: system_prefix
+    openai:
+      strategy: system_prefix
+
+# 静态部分（可被 LLM provider 缓存）- 按缓存优先级排序
 static_sections:
+  # Tier 1: 核心身份 (~300 tokens)
   - id: identity
     asset: "identity/prime_identity.md"
     required: true
+    cache_priority: 1
 
+  # Tier 2: 能力定义 (~400 tokens)
   - id: capabilities
     asset: "capabilities/available_tools.md"
     required: true
+    cache_priority: 2
 
+  # Tier 3: Schema 定义 (~500 tokens)
   - id: schema
     asset: "schemas/prime_schema.md"
     required: true
+    cache_priority: 3
 
+  # Tier 4: 行为规则 (~300 tokens)
   - id: rules
     asset: "rules/prime_rules.md"
     required: true
+    cache_priority: 4
 
+  # Tier 5: 示例 (~500 tokens)
   - id: examples
     asset: "examples/prime_examples.md"
     required: true
+    cache_priority: 5
 
+  # 内联模板（总是存在）
   - id: reminder
     template: |
       ## Remember
@@ -33,6 +62,7 @@ static_sections:
       - Be **specific** with paths and commands
       - System will fail if you output conversation instead of JSON
     required: true
+    cache_priority: 4
 
 # 动态上下文注入点（Prime 通常不需要太多动态上下文）
 context_slots:

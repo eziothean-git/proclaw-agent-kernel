@@ -10,6 +10,7 @@ Architecture and design documentation:
 - Component designs (BlockComposer, Memory Base, etc.)
 - Gateway architecture
 - Agent system design
+- **PROMPT_CACHING_OPTIMIZATION.md** - Prompt 缓存优化方案（静态/动态分离、多 Provider 适配）
 
 ### plans/
 Planning documents and analysis:
@@ -49,6 +50,16 @@ Outdated documentation kept for reference:
 - `/README.md` - Main project README
 - `/agent-kernel/README.md` - Gateway (TypeScript) README
 - `/agent-kernel/QUICKSTART.md` - Gateway quickstart guide
+- `/kernel-v2/README.md` - Rust Kernel v2 README
+
+## Key Architecture Documents
+
+| Document | Description |
+|----------|-------------|
+| [Prompt Caching Optimization](architecture/PROMPT_CACHING_OPTIMIZATION.md) | 静态/动态分离、多 Provider 缓存策略 |
+| [BlockComposer V2 Design](architecture/BLOCKCOMPOSER_V2_DESIGN.md) | Block 组装服务设计 |
+| [Gateway Architecture](architecture/gateway-architecture.md) | TypeScript Gateway 架构 |
+| [Agent Architecture Spec](architecture/agent_kernel_architecture_spec.md) | 完整架构规范 |
 
 ## Documentation Maintenance
 

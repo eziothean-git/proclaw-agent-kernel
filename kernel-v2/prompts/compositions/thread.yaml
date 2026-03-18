@@ -1,34 +1,66 @@
 name: thread
 description: "Agent Thread Executor System Prompt - Executes tasks using SEE-ACT-UPDATE paradigm with static/dynamic context separation"
-version: "2.0"
+version: "3.0"
 
-# 静态部分（可被 LLM provider 缓存）
+# 缓存配置（新增）
+cache_config:
+  # 默认缓存策略：auto 会根据 provider 自动选择最佳策略
+  default_strategy: auto  # auto | claude | openai | none
+  # Provider 特定配置
+  providers:
+    claude:
+      strategy: persistent  # 使用 cache_control: persistent
+      ttl_seconds: 300      # 5 分钟
+    deepseek:
+      strategy: system_prefix  # system message 作为缓存前缀
+    kimi:
+      strategy: system_prefix
+    glm:
+      strategy: system_prefix
+    minimax:
+      strategy: system_prefix
+    openai:
+      strategy: system_prefix
+
+# 静态部分（可被 LLM provider 缓存）- 按缓存优先级排序
 static_sections:
+  # Tier 1: 核心身份 (~300 tokens) - 缓存命中率 95%+
   - id: identity
     asset: "identity/thread_identity.md"
     required: true
+    cache_priority: 1
 
+  # Tier 2: 输出格式 (~200 tokens) - 缓存命中率 90%+
   - id: format
     asset: "rules/json_only.md"
     required: true
+    cache_priority: 2
 
+  # Tier 3: Schema 定义 (~500 tokens) - 缓存命中率 80%+
   - id: schema
     asset: "schemas/thread_schema.md"
     required: true
+    cache_priority: 3
 
+  # Tier 3: 结构规则 (~300 tokens)
   - id: structure
     asset: "rules/thread_structure.md"
     required: true
+    cache_priority: 3
 
+  # Tier 4: 示例 (~500 tokens) - 缓存命中率 40%
   - id: examples
     asset: "examples/thread_examples.md"
     required: true
+    cache_priority: 4
 
+  # Tier 5: 常见错误 (~300 tokens) - 可调优
   - id: mistakes
     asset: "rules/common_mistakes.md"
     required: false
+    cache_priority: 5
 
-# 动态上下文注入点 - 运行时组装
+# 动态上下文注入点 - 运行时组装（每次请求变化，不缓存）
 context_slots:
   # 当前执行状态
   - preset: current_state

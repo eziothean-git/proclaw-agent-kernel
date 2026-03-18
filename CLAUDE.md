@@ -116,6 +116,8 @@ The kernel-v2 is built as three interconnected gRPC services:
 - LLM client with router for multiple providers
 - Supports OpenAI-compatible APIs
 - Configurable model, temperature, max_tokens
+- **Cache-aware messaging**: `CacheControl`, `CacheAwareMessage`, `CacheAwareResponse`
+- **Provider detection**: `LLMProvider` enum for provider-specific caching strategies
 
 **Coordinator** (`src/coordinator/`):
 - Resource coordination and locking
@@ -128,6 +130,13 @@ The kernel-v2 is built as three interconnected gRPC services:
 - `GatewaySkill`: Communicate with gateway
 - `OsInterfaceSkill`: OS-level operations
 - `SchedulerSkill`: Scheduler control
+
+**Utils** (`src/utils/`):
+- `TokenCounter`: Tiktoken-based precise token counting (cl100k_base encoding)
+- Supports token counting, truncation, and text chunking
+
+**Observability** (`src/observability/`):
+- `CacheMetrics`: Prometheus metrics for prompt caching (hit rate, tokens saved, latency)
 
 ### XML Communication Protocol
 
@@ -165,6 +174,49 @@ Recent work adds parallel batch execution (see `.sisyphus/plans/batch-execution-
 - **Anti-blocking mechanisms**: Timeout control, depth limits, step limits, cycle detection
 - **Result aggregation**: Multiple modes (SimpleList, StructuredReport, MergeArtifacts, SmartSummary)
 - **Configuration**: `BatchConfig` with max_parallel_tasks, task_timeout_seconds, max_steps_per_task, max_depth
+
+### Prompt Caching Optimization
+
+The system implements static/dynamic prompt separation for LLM caching:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  SYSTEM MESSAGE (可缓存 - ~2000 tokens, 70-80%)                 │
+├─────────────────────────────────────────────────────────────────┤
+│  Tier 1: 核心身份 (~300 tokens) - 缓存命中率 95%+               │
+│  Tier 2: 能力定义 (~400 tokens) - 缓存命中率 90%                 │
+│  Tier 3: 输出规范 (~500 tokens) - 缓存命中率 80%                 │
+│  Tier 4: 行为规则 (~300 tokens) - 缓存命中率 60%                 │
+│  Tier 5: Few-shot 示例 (~500 tokens) - 缓存命中率 40%            │
+├─────────────────────────────────────────────────────────────────┤
+│  USER MESSAGE (不缓存 - 每次请求变化)                           │
+│  - current_state, task_goal, execution_history                  │
+│  - artifacts, tool_results, error_context                       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Provider-specific caching strategies:**
+
+| Provider  | Strategy          | Description                              |
+|-----------|-------------------|------------------------------------------|
+| Claude    | `cache_control`   | Uses `persistent`/`ephemeral` parameters |
+| DeepSeek  | system_prefix     | System message auto-cached               |
+| Kimi      | system_prefix     | System message auto-cached               |
+| GLM       | system_prefix     | System message auto-cached               |
+| MiniMax   | system_prefix     | System message auto-cached               |
+
+**Key files:**
+- `src/llm/models.rs`: `CacheControl`, `CacheAwareMessage`, `LLMProvider`
+- `src/config/prompt_composer.rs`: `to_claude_messages()`, `to_openai_messages()`
+- `src/utils/token_counter.rs`: Tiktoken integration
+- `src/observability/cache_metrics.rs`: Prometheus cache metrics
+
+**Expected benefits:**
+- Cache hit rate: >80% (same session)
+- Token cost reduction: 40-60%
+- Response latency reduction: 20-30% (cache hit)
+
+See `Documents/architecture/PROMPT_CACHING_OPTIMIZATION.md` for detailed design.
 
 ## Configuration
 
@@ -358,4 +410,19 @@ Files being actively developed:
 - ✅ Updated proclaw.sh with working configuration
 
 See `Documents/2026-03-15-rust-kernel-fixes.md` for detailed fix documentation.
+
+## Recent Fixes (2026-03-18)
+
+- ✅ Implemented prompt caching optimization with multi-provider support
+- ✅ Added `CacheControl`, `CacheAwareMessage`, `CacheAwareResponse` types
+- ✅ Added `LLMProvider` enum for provider detection
+- ✅ Added `to_claude_messages()` and `to_openai_messages()` for provider-specific output
+- ✅ Integrated tiktoken for precise token counting (`TokenCounter`)
+- ✅ Added Prometheus cache metrics (`CacheMetrics`)
+- ✅ Updated YAML compositions with `cache_config` section
+- ✅ Fixed request_id mismatch in Prime response flow (removed `_final` suffix)
+- ✅ Fixed intent type for task completion responses (`task_completed` instead of `conversation`)
+- ✅ Verified end-to-end functionality with file chain test scenario
+
+See `Documents/architecture/PROMPT_CACHING_OPTIMIZATION.md` for caching design documentation.
 

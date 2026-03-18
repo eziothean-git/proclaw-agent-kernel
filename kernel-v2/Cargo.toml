@@ -67,6 +67,9 @@ dashmap = "5.5"
 # Regex for pattern matching
 regex = "1.10"
 
+# Token counting
+tiktoken-rs = "0.5"
+
 # JWT for token handling
 jsonwebtoken = "9"
 

@@ -207,7 +207,7 @@ impl PrimePersonality for PrimePersonalityService {
             .map(|log| format!("{:?}", log))
             .unwrap_or_default();
 
-        // 构建第二轮输入
+        // 构建第二轮输入 - 使用原始 request_id，保持一来一回的设计
         let second_turn_input = InputMessage {
             header: crate::personality::models::InputHeader {
                 timestamp: chrono::Utc::now().to_rfc3339(),
@@ -218,10 +218,10 @@ impl PrimePersonality for PrimePersonalityService {
                 source_ip: None,
                 client_version: None,
                 priority: 1,
-                request_id: format!("{}_final", request_id),
+                request_id: request_id.clone(), // 使用原始 request_id，不加 _final 后缀
             },
             body: format!(
-                "原始请求执行完成。以下是执行结果：\n\n{}\n\nSession日志:\n{}",
+                "[任务执行完成报告]\n\n原始请求已完成执行。请根据以下执行结果生成最终响应：\n\n{}\n\nSession日志:\n{}",
                 execution_summary,
                 session_log
             ),
@@ -251,13 +251,21 @@ impl PrimePersonality for PrimePersonalityService {
         let summary = final_ir.content.as_ref()
             .and_then(|c| c.text.clone())
             .unwrap_or_else(|| execution_summary.clone());
-        
-        if let Err(e) = self.send_result_to_gateway(final_ir.clone(), summary).await {
+
+        // 修正 IR：如果是任务执行后的最终响应，设置正确的 intent
+        let mut result_ir = final_ir;
+        if result_ir.intent == "conversation" && !execution_results.is_empty() {
+            // 任务已执行完成，这是最终响应
+            result_ir.intent = "task_completed".to_string();
+            info!(intent = %result_ir.intent, "Adjusted final response intent");
+        }
+
+        if let Err(e) = self.send_result_to_gateway(result_ir.clone(), summary).await {
             warn!(error = %e, "Failed to send result to gateway");
         }
 
         // 返回最终 IR 给调用方
-        let proto_ir = convert_ir_to_proto(final_ir);
+        let proto_ir = convert_ir_to_proto(result_ir);
 
         Ok(Response::new(ProcessRequestResponse {
             request_id,
