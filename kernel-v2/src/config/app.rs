@@ -1,17 +1,20 @@
 //! Configuration management for BlockComposer
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Main configuration structure
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ComposerConfig {
     pub server: ServerConfig,
-    pub cache: CacheConfig,
+    pub prompts: PromptsConfig,
     pub providers: ProvidersConfig,
     pub permissions: PermissionsConfig,
     pub gateway: GatewayConfig,
     pub observability: ObservabilityConfig,
+    #[serde(default)]
+    pub prime: PrimeProviderConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -22,30 +25,211 @@ pub struct ServerConfig {
     pub request_timeout_seconds: u64,
 }
 
+/// Prompt configuration for different prompt types
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct CacheConfig {
-    pub l1: L1CacheConfig,
-    pub l2: L2CacheConfig,
+pub struct PromptsConfig {
+    pub thread: ThreadPromptConfig,
+    /// Asset-based prompt composition settings
+    #[serde(default)]
+    pub assets_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub compositions_dir: Option<PathBuf>,
 }
 
+/// A single section in a prompt composition
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct L1CacheConfig {
-    pub max_entries: usize,
-    pub default_ttl_seconds: TtlConfig,
+pub struct PromptSection {
+    /// Unique identifier for this section
+    pub id: String,
+    /// Path to the asset file (relative to assets_dir)
+    #[serde(default)]
+    pub asset: Option<PathBuf>,
+    /// Inline template content (alternative to asset)
+    #[serde(default)]
+    pub template: Option<String>,
+    /// Whether this section is required
+    #[serde(default = "default_required")]
+    pub required: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct TtlConfig {
-    pub prime: u64,
-    pub session: u64,
-    pub task: u64,
+fn default_required() -> bool {
+    true
 }
 
+/// 预设槽位类型 - 常用的上下文内容类型
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextSlotPreset {
+    /// 当前执行状态（phase, step）
+    CurrentState,
+    /// 执行历史和工具调用
+    ExecutionHistory,
+    /// 任务目标和约束
+    TaskGoal,
+    /// 已产生的 artifacts
+    Artifacts,
+    /// 对话历史
+    ConversationHistory,
+    /// 最近工具调用结果
+    ToolResults,
+    /// 错误和异常信息
+    ErrorContext,
+}
+
+impl std::fmt::Display for ContextSlotPreset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ContextSlotPreset::CurrentState => write!(f, "current_state"),
+            ContextSlotPreset::ExecutionHistory => write!(f, "execution_history"),
+            ContextSlotPreset::TaskGoal => write!(f, "task_goal"),
+            ContextSlotPreset::Artifacts => write!(f, "artifacts"),
+            ContextSlotPreset::ConversationHistory => write!(f, "conversation_history"),
+            ContextSlotPreset::ToolResults => write!(f, "tool_results"),
+            ContextSlotPreset::ErrorContext => write!(f, "error_context"),
+        }
+    }
+}
+
+/// 槽位内容来源类型
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SlotSourceType {
+    /// 内联模板
+    Template,
+    /// Rust 函数
+    Function,
+    /// 外部文件
+    File,
+}
+
+/// 槽位内容来源
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct L2CacheConfig {
+pub struct SlotSource {
+    /// 来源类型
+    #[serde(rename = "type")]
+    pub source_type: SlotSourceType,
+    /// 模板内容（type=template 时使用）
+    #[serde(default)]
+    pub template: Option<String>,
+    /// 函数名称（type=function 时使用）
+    #[serde(default)]
+    pub function: Option<String>,
+    /// 文件路径（type=file 时使用）
+    #[serde(default)]
+    pub file: Option<PathBuf>,
+    /// 变量映射
+    #[serde(default)]
+    pub variables: HashMap<String, String>,
+}
+
+/// 槽位位置
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SlotPosition {
+    /// 在静态部分之后（默认）
+    #[default]
+    AfterStatic,
+    /// 在静态部分之前
+    BeforeStatic,
+    /// 替换 {{MARKER_NAME}} 占位符
+    AtMarker(String),
+}
+
+/// 上下文槽位定义
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ContextSlot {
+    /// 槽位唯一标识（自定义时必填）
+    #[serde(default)]
+    pub id: Option<String>,
+    /// 预设模板名称（使用预设时必填）
+    #[serde(default)]
+    pub preset: Option<ContextSlotPreset>,
+    /// 描述
+    #[serde(default)]
+    pub description: String,
+    /// 位置
+    #[serde(default)]
+    pub position: SlotPosition,
+    /// 是否必须
+    #[serde(default = "default_required")]
+    pub required: bool,
+    /// 内容来源（自定义时使用）
+    #[serde(default)]
+    pub source: Option<SlotSource>,
+    /// 配置选项
+    #[serde(default)]
+    pub config: HashMap<String, serde_json::Value>,
+}
+
+impl ContextSlot {
+    /// 获取槽位标识（优先使用 id，其次使用 preset 名称）
+    pub fn slot_id(&self) -> String {
+        self.id.clone()
+            .or_else(|| self.preset.as_ref().map(|p| p.to_string()))
+            .unwrap_or_else(|| "unknown".to_string())
+    }
+}
+
+/// 输出结构配置
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct OutputStructure {
+    /// 输出格式
+    pub format: String,
+    /// 分隔符
+    #[serde(default = "default_separator")]
+    pub separator: String,
+    /// 是否在静态和动态部分之间添加边界标记
+    #[serde(default)]
+    pub context_boundary: bool,
+}
+
+fn default_separator() -> String {
+    "\n\n---\n\n".to_string()
+}
+
+/// Defines how to compose a complete prompt from assets
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PromptComposition {
+    /// Name of the composition
+    pub name: String,
+    /// Description of what this prompt is for
+    pub description: String,
+    /// Version of this composition
+    pub version: String,
+    /// 静态部分（可缓存）- 新格式
+    #[serde(default)]
+    pub static_sections: Vec<PromptSection>,
+    /// 兼容旧格式
+    #[serde(default)]
+    pub sections: Vec<PromptSection>,
+    /// 上下文槽位定义
+    #[serde(default)]
+    pub context_slots: Vec<ContextSlot>,
+    /// 输出结构配置
+    #[serde(default)]
+    pub output_structure: Option<OutputStructure>,
+}
+
+impl PromptComposition {
+    /// 检查是否使用新格式（static_sections + context_slots）
+    pub fn uses_new_format(&self) -> bool {
+        !self.static_sections.is_empty() || !self.context_slots.is_empty()
+    }
+
+    /// 获取静态部分（优先使用 static_sections，否则回退到 sections）
+    pub fn get_static_sections(&self) -> &Vec<PromptSection> {
+        if !self.static_sections.is_empty() {
+            &self.static_sections
+        } else {
+            &self.sections
+        }
+    }
+}
+
+/// Thread system prompt configuration
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ThreadPromptConfig {
     pub path: PathBuf,
-    pub max_size_mb: u64,
-    pub compression: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -141,6 +325,45 @@ pub struct LoggingConfig {
     pub output: String,
 }
 
+/// Prime Personality Provider Configuration
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PrimeProviderConfig {
+    /// Path to the prime personality prompt file
+    #[serde(default = "default_prime_prompt_path")]
+    pub prompt_path: PathBuf,
+    /// LLM temperature for prime personality
+    #[serde(default = "default_prime_temperature")]
+    pub temperature: f32,
+    /// Maximum tokens for prime personality
+    #[serde(default = "default_prime_max_tokens")]
+    pub max_tokens: i32,
+    /// Model to use (overrides global setting)
+    pub model: Option<String>,
+}
+
+fn default_prime_prompt_path() -> PathBuf {
+    PathBuf::from("/etc/proclaw/prompts/prime.md")
+}
+
+fn default_prime_temperature() -> f32 {
+    0.3
+}
+
+fn default_prime_max_tokens() -> i32 {
+    4096
+}
+
+impl Default for PrimeProviderConfig {
+    fn default() -> Self {
+        Self {
+            prompt_path: default_prime_prompt_path(),
+            temperature: default_prime_temperature(),
+            max_tokens: default_prime_max_tokens(),
+            model: None,
+        }
+    }
+}
+
 impl ComposerConfig {
     /// Load configuration from file
     pub async fn load(path: &PathBuf) -> anyhow::Result<Self> {
@@ -158,20 +381,12 @@ impl ComposerConfig {
                 max_concurrent_requests: 100,
                 request_timeout_seconds: 30,
             },
-            cache: CacheConfig {
-                l1: L1CacheConfig {
-                    max_entries: 1000,
-                    default_ttl_seconds: TtlConfig {
-                        prime: 300,
-                        session: 120,
-                        task: 30,
-                    },
+            prompts: PromptsConfig {
+                thread: ThreadPromptConfig {
+                    path: PathBuf::from("/etc/proclaw/prompts/thread.md"),
                 },
-                l2: L2CacheConfig {
-                    path: PathBuf::from("/var/lib/proclaw/cache.db"),
-                    max_size_mb: 512,
-                    compression: "zstd".to_string(),
-                },
+                assets_dir: Some(PathBuf::from("/etc/proclaw/prompts/assets")),
+                compositions_dir: Some(PathBuf::from("/etc/proclaw/prompts/compositions")),
             },
             providers: ProvidersConfig {
                 bash: BashProviderConfig {
@@ -230,6 +445,7 @@ impl ComposerConfig {
                     output: "stdout".to_string(),
                 },
             },
+            prime: PrimeProviderConfig::default(),
         }
     }
 }

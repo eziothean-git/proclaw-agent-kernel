@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use anyhow::{Result, anyhow};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use sha2::{Sha256, Digest};
 
 use crate::block_composer::BlockComposerEngine;
@@ -9,6 +9,7 @@ use crate::llm::{LLMRouter, config::DifficultyLevel};
 use crate::server::proto::{Block, Profile};
 
 use super::{IntermediateRepresentation, ProcessDefinition, InputMessage, PrimePersonalityConfig, ConversationTurn, Content, Attachment, ResourceReference};
+use super::prime_xml_parser::PrimeXmlParser;
 
 pub struct PrimePersonality {
     config: PrimePersonalityConfig,
@@ -206,39 +207,123 @@ indicate if you need additional context from memory\n",
         response: &str,
         request_id: &str,
     ) -> Result<IntermediateRepresentation> {
-        let json_str = self.extract_json(response)?;
-        
-        let value: serde_json::Value = match serde_json::from_str(&json_str) {
-            Ok(v) => v,
-            Err(e) => {
-                warn!(error = %e, "Failed to parse JSON, using fallback");
-                return Ok(self.create_fallback_ir(request_id, response));
+        // First, try to extract and parse JSON (primary format)
+        if let Ok(json_str) = self.extract_json(response) {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                match self.parse_json_ir(&value, request_id) {
+                    Ok(ir) => {
+                        debug!("Successfully parsed Prime JSON response");
+                        return Ok(ir);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "JSON detected but parsing failed, trying XML fallback");
+                    }
+                }
             }
+        }
+
+        // Fallback: try XML parsing
+        let xml_parser = PrimeXmlParser::new();
+        match xml_parser.parse(response) {
+            Ok(prime_response) => {
+                debug!("Successfully parsed Prime XML response (fallback)");
+                return Ok(prime_response.extract_ir(request_id));
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to parse XML, using fallback IR");
+            }
+        }
+
+        // Final fallback
+        Ok(self.create_fallback_ir(request_id, response))
+    }
+
+    /// Parse JSON format IntermediateRepresentation (new primary format)
+    fn parse_json_ir(
+        &self,
+        value: &serde_json::Value,
+        request_id: &str,
+    ) -> Result<IntermediateRepresentation> {
+        // Extract analysis section
+        let analysis = value.get("analysis");
+
+        let observation = analysis
+            .and_then(|a| a.get("observation"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("Process user request");
+
+        let complexity = analysis
+            .and_then(|a| a.get("complexity"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("simple");
+
+        // Determine intent based on processes or observation
+        let processes = self.extract_processes_from_json(value);
+        let intent = if processes.is_empty() {
+            "conversation".to_string()
+        } else {
+            // Derive intent from first process name or complexity
+            processes.first()
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| complexity.to_string())
         };
-        
-        let ir = IntermediateRepresentation {
+
+        let goals = vec![observation.to_string()];
+
+        // Extract explanation
+        let explanation = value.get("explanation")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let content = Some(Content {
+            text: explanation,
+            attachments: None,
+            references: None,
+        });
+
+        Ok(IntermediateRepresentation {
             request_id: request_id.to_string(),
-            intent: value.get("intent")
-                .and_then(|v| v.as_str())
-                .unwrap_or("conversation")
-                .to_string(),
-            goals: value.get("goals")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect())
-                .unwrap_or_else(|| vec!["Process user request".to_string()]),
-            processes: self.extract_processes(&value),
-            context_hints: value.get("context_hints")
-                .and_then(|v| v.as_object())
-                .map(|obj| obj.iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect())
-                .unwrap_or_default(),
-            content: self.extract_content(&value).ok(),
-        };
-        
-        Ok(ir)
+            intent,
+            goals,
+            processes,
+            context_hints: std::collections::HashMap::new(),
+            content,
+        })
+    }
+
+    /// Extract processes from new JSON format
+    fn extract_processes_from_json(&self, value: &serde_json::Value) -> Vec<ProcessDefinition> {
+        value.get("processes")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter()
+                .filter_map(|p| {
+                    let capabilities = p.get("capabilities")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect())
+                        .unwrap_or_default();
+
+                    let constraints = p.get("constraints")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect());
+
+                    Some(ProcessDefinition {
+                        name: p.get("name")?.as_str()?.to_string(),
+                        goal: p.get("goal")?.as_str()?.to_string(),
+                        capabilities,
+                        forbidden_capabilities: None,
+                        constraints,
+                        security_level: p.get("security_level")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        dependencies: None,
+                    })
+                })
+                .collect())
+            .unwrap_or_default()
     }
     
     fn extract_processes(&self, value: &serde_json::Value) -> Vec<ProcessDefinition> {

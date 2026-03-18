@@ -1,0 +1,74 @@
+name: thread
+description: "Agent Thread Executor System Prompt - Executes tasks using SEE-ACT-UPDATE paradigm with static/dynamic context separation"
+version: "2.0"
+
+# 静态部分（可被 LLM provider 缓存）
+static_sections:
+  - id: identity
+    asset: "identity/thread_identity.md"
+    required: true
+
+  - id: format
+    asset: "rules/json_only.md"
+    required: true
+
+  - id: schema
+    asset: "schemas/thread_schema.md"
+    required: true
+
+  - id: structure
+    asset: "rules/thread_structure.md"
+    required: true
+
+  - id: examples
+    asset: "examples/thread_examples.md"
+    required: true
+
+  - id: mistakes
+    asset: "rules/common_mistakes.md"
+    required: false
+
+# 动态上下文注入点 - 运行时组装
+context_slots:
+  # 当前执行状态
+  - preset: current_state
+    position: after_static
+    config:
+      include_artifacts_summary: true
+
+  # 任务目标和约束
+  - preset: task_goal
+    position: after_static
+    config:
+      include_constraints: true
+
+  # 执行历史
+  - preset: execution_history
+    position: after_static
+    config:
+      max_events: 10
+
+  # 已产生的 artifacts
+  - preset: artifacts
+    position: after_static
+    config:
+      max_tokens: 2000
+
+  # 工具调用结果
+  - preset: tool_results
+    position: after_static
+    config:
+      include_errors: true
+
+  # 错误上下文（当有错误时）
+  - preset: error_context
+    position: after_static
+    required: false
+    config:
+      include_stack_trace: false
+
+# 输出结构配置
+output_structure:
+  format: "markdown"
+  separator: "\n\n---\n\n"
+  context_boundary: true

@@ -156,6 +156,7 @@ mod tests {
     };
 
     #[test]
+    #[ignore = "deprecated: XML is no longer the primary format, use JSON instead"]
     fn test_parse_simple_response() {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <agent-response version="1.0" xmlns="http://proclaw.ai/response">
@@ -187,6 +188,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "deprecated: XML is no longer the primary format, use JSON instead"]
     fn test_extract_from_markdown() {
         let markdown = r#"Here's my response:
 

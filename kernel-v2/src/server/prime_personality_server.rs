@@ -16,6 +16,7 @@ use crate::personality::{PrimePersonality as PrimePersonalityCore, InputMessage,
 use crate::coordinator::skill_registry::SkillRegistry;
 use crate::coordinator::ExecutionCoordinator;
 use crate::block_composer::BlockComposerEngine;
+use crate::config::PromptLoader;
 use crate::executor::IRProcessExecutor;
 use crate::llm::LLMRouter;
 use crate::auth::CapabilityLevel;
@@ -48,6 +49,7 @@ impl PrimePersonalityService {
         block_composer: Arc<BlockComposerEngine>,
         llm_router: Arc<LLMRouter>,
         data_path: PathBuf,
+        prompt_loader: Arc<PromptLoader>,
     ) -> anyhow::Result<Self> {
         let ir_executor = Arc::new(
             IRProcessExecutor::new(
@@ -55,6 +57,7 @@ impl PrimePersonalityService {
                 coordinator,
                 block_composer,
                 llm_router,
+                prompt_loader,
             ).await?
         );
 

@@ -4,17 +4,13 @@ server:
   max_concurrent_requests: 50
   request_timeout_seconds: 30
 
-cache:
-  l1:
-    max_entries: 100
-    default_ttl_seconds:
-      prime: 300
-      session: 120
-      task: 30
-  l2:
-    path: "./data/cache.db"
-    max_size_mb: 100
-    compression: "zstd"
+# Prompt Configuration
+prompts:
+  thread:
+    path: "./prompts/thread.md"
+  # Asset-based prompt composition settings
+  assets_dir: "./prompts/assets"
+  compositions_dir: "./prompts/compositions"
 
 providers:
   bash:
@@ -42,6 +38,12 @@ permissions:
   default_token_ttl_seconds: 3600
   default_max_calls: 100
   policy_file: "./data/policies.yaml"
+
+# Prime Personality Configuration
+prime:
+  prompt_path: "/home/eziothean/ProClaw/kernel-v2/prompts/prime.md"
+  temperature: 0.3
+  max_tokens: 4096
 
 gateway:
   url: "http://localhost:3000"

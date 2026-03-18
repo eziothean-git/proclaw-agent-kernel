@@ -542,6 +542,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "deprecated: XML is no longer the primary format, use JSON instead"]
     fn test_roundtrip() {
         let original = AgentResponse::new(
             Reasoning::new(

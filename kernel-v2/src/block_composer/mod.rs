@@ -1,16 +1,12 @@
 //! Block composer engine
 
-pub mod cache;
-
 use crate::config::{ComposerConfig, OutputFormat};
 use crate::server::proto::{Block, ComposeResponse, Profile};
-use cache::{CacheKey, CacheManager, CachedComposition};
-use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
-use tracing::{debug, info, instrument};
+use tracing::{info, instrument};
 
 /// Block metadata
 #[derive(Debug, Clone)]
@@ -126,7 +122,6 @@ impl CompositionProfile {
 
 /// Core block composition engine
 pub struct BlockComposerEngine {
-    cache: Arc<CacheManager>,
     block_store: Arc<BlockStore>,
     profiles: HashMap<i32, CompositionProfile>,
     output_format: OutputFormat,
@@ -134,21 +129,19 @@ pub struct BlockComposerEngine {
 
 impl BlockComposerEngine {
     /// Create new composer engine
-    pub async fn new(config: &ComposerConfig) -> anyhow::Result<Self> {
+    pub async fn new(_config: &ComposerConfig) -> anyhow::Result<Self> {
         info!("Initializing BlockComposer engine");
-        
-        let cache = Arc::new(CacheManager::new(&config.cache).await?);
+
         let block_store = Arc::new(BlockStore::new());
-        
+
         let mut profiles = HashMap::new();
         profiles.insert(Profile::Prime as i32, CompositionProfile::for_profile(Profile::Prime));
         profiles.insert(Profile::Session as i32, CompositionProfile::for_profile(Profile::Session));
         profiles.insert(Profile::Task as i32, CompositionProfile::for_profile(Profile::Task));
-        
+
         info!("BlockComposer engine initialized with {} profiles", profiles.len());
-        
+
         Ok(Self {
-            cache,
             block_store,
             profiles,
             output_format: OutputFormat::Markdown,
@@ -162,51 +155,27 @@ impl BlockComposerEngine {
     }
     
     /// Compose blocks into final context
-    #[instrument(skip(self, blocks, context))]
+    #[instrument(skip(self, blocks, _context))]
     pub async fn compose(
         &self,
         session_id: &str,
         task_id: &str,
         profile: Profile,
         blocks: Vec<Block>,
-        context: HashMap<String, String>,
+        _context: HashMap<String, String>,
     ) -> anyhow::Result<ComposeResponse> {
         let start = Instant::now();
-        
+
         // Convert profile to i32 for lookup
         let profile_i32 = profile as i32;
         let profile_name = format!("{:?}", profile).to_lowercase();
-        
+
         // Get composition profile config
         let profile_config = self.profiles
             .get(&profile_i32)
             .cloned()
             .unwrap_or_else(|| CompositionProfile::for_profile(profile));
-        
-        // Generate cache key
-        let cache_key = CacheKey::new(
-            &profile_name,
-            &blocks.iter().map(|b| b.block_type).collect::<Vec<_>>(),
-            &context,
-        );
-        
-        // Try to get from cache
-        if let Some(cached) = self.cache.get(&cache_key).await? {
-            debug!("Cache hit for {}:{}", session_id, task_id);
-            
-            return Ok(ComposeResponse {
-                composed_text: cached.text,
-                block_ids_used: cached.block_ids,
-                total_tokens: cached.total_tokens,
-                cache_hit: true,
-                trace_id: format!("trace_{}_{}", session_id, task_id),
-                latency: Some(prost_types::Duration {
-                    seconds: start.elapsed().as_secs() as i64,
-                    nanos: start.elapsed().subsec_nanos() as i32,
-                }),
-            });
-        }
-        
+
         // Store blocks
         for block in &blocks {
             let metadata = BlockMetadata {
@@ -216,47 +185,29 @@ impl BlockComposerEngine {
             };
             self.block_store.store(block.clone(), metadata).await;
         }
-        
+
         // Compose blocks according to profile
-        let composed = self.compose_blocks(&profile_config,&blocks, profile_config.token_budget).await?;
-        
+        let composed = self.compose_blocks(&profile_config, &blocks, profile_config.token_budget).await?;
+
         // Calculate total tokens
         let total_tokens = composed.iter().map(|b| b.token_count).sum();
-        
+
         let block_ids_used: Vec<String> = composed.iter().map(|b| b.block_id.clone()).collect();
         let composed_text = match self.output_format {
             OutputFormat::Xml => self.compose_xml(&composed, &profile_name),
             OutputFormat::XmlHybrid => self.compose_xml_hybrid(&composed, &profile_name),
             OutputFormat::Markdown => self.compose_markdown(&composed),
         };
-        
-        // Cache the result
-        let ttl_seconds = match profile {
-            Profile::Prime => 300,
-            Profile::Session => 120,
-            Profile::Task => 30,
-            _ => 30,
-        };
-        
-        let cached = CachedComposition {
-            text: composed_text.clone(),
-            block_ids: block_ids_used.clone(),
-            total_tokens,
-            cached_at: Utc::now(),
-            expires_at: Utc::now() + chrono::Duration::seconds(ttl_seconds as i64),
-        };
-        
-        self.cache.put(&cache_key, cached).await?;
-        
+
         let elapsed = start.elapsed();
         info!(
-            "Composed {} blocks for {}:{} in {:?} (cache miss)",
+            "Composed {} blocks for {}:{} in {:?}",
             composed.len(),
             session_id,
             task_id,
             elapsed
         );
-        
+
         Ok(ComposeResponse {
             composed_text,
             block_ids_used,
@@ -316,16 +267,6 @@ impl BlockComposerEngine {
         }
         
         Ok(result)
-    }
-    
-    /// Get cache statistics
-    pub async fn get_cache_stats(&self) -> anyhow::Result<cache::CacheStats> {
-        self.cache.stats().await
-    }
-    
-    /// Invalidate cache for a specific key
-    pub async fn invalidate_cache(&self, key: &CacheKey) -> anyhow::Result<()> {
-        self.cache.invalidate(key).await
     }
 
     // ===== 动态 Block 管理方法 (Phase 1 新增) =====
@@ -510,7 +451,7 @@ mod tests {
     async fn create_test_engine() -> BlockComposerEngine {
         let temp_dir = std::env::temp_dir().join(format!("proclaw_test_{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&temp_dir).await.unwrap();
-        
+
         let config = ComposerConfig {
             server: crate::config::ServerConfig {
                 socket_path: temp_dir.join("test.sock"),
@@ -518,20 +459,12 @@ mod tests {
                 max_concurrent_requests: 100,
                 request_timeout_seconds: 30,
             },
-            cache: crate::config::CacheConfig {
-                l1: crate::config::L1CacheConfig {
-                    max_entries: 100,
-                    default_ttl_seconds: crate::config::TtlConfig {
-                        prime: 300,
-                        session: 120,
-                        task: 30,
-                    },
+            prompts: crate::config::PromptsConfig {
+                thread: crate::config::ThreadPromptConfig {
+                    path: temp_dir.join("thread.md"),
                 },
-                l2: crate::config::L2CacheConfig {
-                    path: temp_dir.join("cache.db"),
-                    max_size_mb: 10,
-                    compression: "zstd".to_string(),
-                },
+                assets_dir: None,
+                compositions_dir: None,
             },
             providers: crate::config::ProvidersConfig {
                 bash: crate::config::BashProviderConfig {
@@ -586,6 +519,7 @@ mod tests {
                     output: "stdout".to_string(),
                 },
             },
+            prime: crate::config::PrimeProviderConfig::default(),
         };
         
         BlockComposerEngine::new(&config).await.unwrap()

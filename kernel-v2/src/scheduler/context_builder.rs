@@ -1,7 +1,11 @@
 //! Context Builder Adapter
-//! 
+//!
 //! 将 Agent Thread 的历史转换为 Block，通过 BlockComposer 合成 Working Set
 //! 这是最低级别的 Context Compiler（规则驱动，非智能）
+//!
+//! # SEE-ACT-UPDATE Context Injection
+//!
+//! 构建 ExecutionContext，供 PromptComposer 使用（静态/动态分离）
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,57 +15,122 @@ use crate::agent_thread::{
     storage::ThreadStorage,
 };
 use crate::block_composer::BlockComposerEngine;
+use crate::config::PromptLoader;
+use crate::config::ExecutionContext as ComposerExecutionContext;
 use crate::server::proto::Profile;
 use crate::server::proto::Block;
 
 /// Context Builder - 规则驱动的 Working Set 构造器
 pub struct ContextBuilder {
     composer: Arc<BlockComposerEngine>,
+    prompt_loader: Arc<PromptLoader>,
 }
 
 impl ContextBuilder {
-    pub fn new(composer: Arc<BlockComposerEngine>) -> Self {
-        Self { composer }
+    pub fn new(composer: Arc<BlockComposerEngine>, prompt_loader: Arc<PromptLoader>) -> Self {
+        Self { composer, prompt_loader }
     }
-    
-    /// 从 Agent Thread 历史构建 Working Set
-    pub async fn build(
+
+    /// 构建执行上下文（不直接组装 prompt）
+    /// 供 PromptComposer 使用，支持静态/动态分离
+    pub async fn build_context(
         &self,
         storage: &ThreadStorage,
         step_number: usize,
-    ) -> anyhow::Result<WorkingSet> {
+    ) -> anyhow::Result<ComposerExecutionContext> {
         // 读取 Thread 元数据
         let meta = storage.read_meta().await?;
         let immutable_input = storage.read_immutable_input().await?;
         let recent_events = storage.read_recent_events(10).await?;
         let artifacts = storage.list_artifacts().await?;
-        
-        // 根据 Phase 构建 Block
-        let blocks = self.build_blocks(
-            &meta,
-            &immutable_input,
-            &recent_events,
-            &artifacts,
+
+        // 格式化事件为文本
+        let events_text = self.format_events_readable(&recent_events);
+
+        // 格式化 artifacts 为文本
+        let artifacts_text = self.format_artifacts_readable(&artifacts);
+
+        // 提取工具调用结果
+        let tool_results_text = self.extract_tool_results(&recent_events);
+
+        // 提取错误信息
+        let error_text = self.extract_errors(&recent_events);
+
+        Ok(ComposerExecutionContext {
+            task_goal: immutable_input.task_goal,
+            constraints: immutable_input.constraints,
+            current_phase: format!("{:?}", meta.current_phase),
             step_number,
-        )?;
-        
-        // 调用 BlockComposer 合成
-        let response = self.composer.compose(
-            &meta.session_id.0,
-            &meta.thread_id.0,
-            self.profile_for_phase(meta.current_phase),
-            blocks,
-            HashMap::new(),
-        ).await?;
-        
-        Ok(WorkingSet {
-            task_id: meta.thread_id.0.clone(),
-            task_goal: immutable_input.task_goal.clone(),
-            current_phase: meta.current_phase,
-            step_number,
-            composed_text: response.composed_text,
-            token_estimate: response.total_tokens as usize,
+            events_text,
+            artifacts_text,
+            token_budget: 4000,
+            tool_results_text,
+            error_text,
         })
+    }
+
+    /// 格式化 artifacts 为可读文本
+    fn format_artifacts_readable(&self, artifacts: &[ArtifactSlot]) -> String {
+        if artifacts.is_empty() {
+            return String::new();
+        }
+
+        let mut formatted = String::new();
+        for artifact in artifacts {
+            formatted.push_str(&format!(
+                "### {:?} (Priority: {})\n",
+                artifact.artifact_type, artifact.priority
+            ));
+            formatted.push_str(&serde_json::to_string_pretty(&artifact.content).unwrap_or_default());
+            formatted.push_str("\n\n");
+        }
+        formatted
+    }
+
+    /// 从事件中提取工具调用结果
+    fn extract_tool_results(&self, events: &[Event]) -> String {
+        use crate::agent_thread::models::EventType;
+
+        let mut results = Vec::new();
+        for event in events.iter().rev().take(5) {
+            if event.event_type == EventType::ToolResult {
+                if let (Some(skill), Some(tool)) = (
+                    event.content.get("skill").and_then(|v| v.as_str()),
+                    event.content.get("tool").and_then(|v| v.as_str())
+                ) {
+                    let success = event.content.get("success")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
+                    if let Some(result) = event.content.get("result") {
+                        results.push(format!(
+                            "- {}.{}: {}\n  Result: {}",
+                            skill, tool,
+                            if success { "✓" } else { "✗" },
+                            serde_json::to_string(result).unwrap_or_default()
+                        ));
+                    }
+                }
+            }
+        }
+        results.join("\n")
+    }
+
+    /// 从事件中提取错误信息
+    fn extract_errors(&self, events: &[Event]) -> String {
+        use crate::agent_thread::models::EventType;
+
+        let mut errors = Vec::new();
+        for event in events.iter().rev() {
+            if event.event_type == EventType::ToolResult {
+                if let Some(error) = event.content.get("error").and_then(|v| v.as_str()) {
+                    if !error.is_empty() {
+                        errors.push(error.to_string());
+                    }
+                }
+            }
+        }
+        errors.join("\n")
     }
     
     /// 根据 Phase 选择 Profile
@@ -82,8 +151,29 @@ impl ContextBuilder {
         step_number: usize,
     ) -> anyhow::Result<Vec<Block>> {
         use crate::server::proto::BlockType;
-        
+
         let mut blocks = Vec::new();
+
+        // 0. System Identity Block - 从配置文件加载
+        // Note: This is sync because we're in a non-async context
+        // The prompt should be pre-loaded via prompt_loader.load_all()
+        let system_prompt = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                self.prompt_loader.get_thread_prompt().await
+            })
+        });
+        
+        blocks.push(Block {
+            block_id: format!("system_identity_{}", step_number),
+            block_type: BlockType::SystemIdentity as i32,
+            content: system_prompt.to_string(),
+            metadata: vec![],
+            priority: 100,
+            token_count: (system_prompt.len() / 4) as u32,
+            dependencies: vec![],
+            content_hash: Self::compute_hash(&system_prompt),
+            created_at: None,
+        });
         
         // 1. Task Goal Block (优先级最高)
         blocks.push(Block {
@@ -299,38 +389,5 @@ impl ContextBuilder {
             ArtifactType::NextSteps => BlockType::WorkingMemory as i32,
             ArtifactType::Custom(_) => BlockType::WorkingMemory as i32,
         }
-    }
-}
-
-/// Working Set - 合成的上下文
-#[derive(Debug, Clone)]
-pub struct WorkingSet {
-    pub task_id: String,
-    pub task_goal: String,
-    pub current_phase: ExecutionPhase,
-    pub step_number: usize,
-    pub composed_text: String,
-    pub token_estimate: usize,
-}
-
-impl WorkingSet {
-    /// 转换为 Prompt 文本
-    pub fn to_prompt(&self,
-    ) -> String {
-        format!(
-            r#"{}
-
-=== CONTEXT ===
-Task: {}
-Phase: {:?}
-Step: {}
-Token Estimate: {}
-"#,
-            self.composed_text,
-            self.task_goal,
-            self.current_phase,
-            self.step_number,
-            self.token_estimate
-        )
     }
 }

@@ -361,22 +361,15 @@ impl BlockComposer for ComposerServer {
         &self,
         _request: Request<GetMetricsRequest>,
     ) -> Result<Response<MetricsResponse>, Status> {
-        match self.composer.get_cache_stats().await {
-            Ok(stats) => {
-                let mut gauges = HashMap::new();
-                gauges.insert("l1_cache_size".to_string(), stats.l1.len as f64);
-                gauges.insert("l2_cache_size_mb".to_string(), stats.l2.size_mb);
-                
-                Ok(Response::new(MetricsResponse {
-                    counters: HashMap::new(),
-                    gauges,
-                    histograms: HashMap::new(),
-                }))
-            }
-            Err(e) => {
-                Err(Status::internal(format!("Failed to get metrics: {}", e)))
-            }
-        }
+        // Return basic metrics (cache removed)
+        let mut gauges = HashMap::new();
+        gauges.insert("block_store_active".to_string(), 1.0);
+
+        Ok(Response::new(MetricsResponse {
+            counters: HashMap::new(),
+            gauges,
+            histograms: HashMap::new(),
+        }))
     }
 
     async fn subscribe_traces(

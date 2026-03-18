@@ -10,6 +10,7 @@
 use std::sync::Arc;
 use tracing::{info, instrument};
 
+use crate::auth::CapabilityLevel;
 use crate::coordinator::models::{SkillRequest, SkillResult};
 use crate::skills::BashSkill;
 use crate::skills::GatewaySkill;
@@ -70,6 +71,23 @@ impl SkillRegistry {
         match request.skill_name.as_str() {
             "bash" => {
                 self.bash_skill.execute(
+                    &request.tool_name,
+                    request.parameters,
+                    request.context,
+                ).await
+            }
+            "gateway" => {
+                // Gateway skill requires Prime level
+                if !request.context.capability_level.can_access(CapabilityLevel::Prime) {
+                    return Ok(SkillResult {
+                        request_id: request.request_id,
+                        success: false,
+                        result: None,
+                        error: Some("Permission denied: gateway skill requires Prime level".to_string()),
+                        execution_time_ms: 0,
+                    });
+                }
+                self.gateway_skill.execute(
                     &request.tool_name,
                     request.parameters,
                     request.context,

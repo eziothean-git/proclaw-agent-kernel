@@ -16,6 +16,7 @@ use crate::agent_thread::{
     storage::ThreadStorage,
 };
 use crate::block_composer::BlockComposerEngine;
+use crate::config::{PromptLoader, PromptComposer};
 use crate::coordinator::{
     ExecutionCoordinator,
     lock_manager::DirectoryLockManager,
@@ -75,6 +76,7 @@ pub struct AgentKernelService {
     // 组件
     context_builder: Arc<ContextBuilder>,
     output_parser: Arc<OutputParser>,
+    prompt_composer: Arc<PromptComposer>,
 
     #[cfg(feature = "control-plane")]
     thread_manager: Arc<ThreadManager>,
@@ -137,6 +139,7 @@ impl AgentKernelService {
         config: AgentKernelConfig,
         block_composer: Arc<BlockComposerEngine>,
         gateway_skill: Arc<crate::skills::GatewaySkill>,
+        prompt_loader: Arc<PromptLoader>,
     ) -> anyhow::Result<Self> {
         info!("Initializing AgentKernel service");
         
@@ -201,8 +204,15 @@ impl AgentKernelService {
         ));
 
         // 初始化 Context Builder 和 Output Parser
-        let context_builder = Arc::new(ContextBuilder::new(block_composer.clone()));
+        let context_builder = Arc::new(ContextBuilder::new(block_composer.clone(), prompt_loader.clone()));
         let output_parser = Arc::new(OutputParser::new());
+
+        // 初始化 PromptComposer（用于静态/动态分离的 prompt 组装）
+        let assets_dir = std::path::PathBuf::from("/home/eziothean/ProClaw/kernel-v2/prompts/assets");
+        let compositions_dir = std::path::PathBuf::from("/home/eziothean/ProClaw/kernel-v2/prompts/compositions");
+        let prompt_composer = Arc::new(PromptComposer::new(assets_dir, compositions_dir));
+        prompt_composer.load_all().await?;
+        info!("PromptComposer initialized");
 
         let skill_registry = Arc::new(SkillRegistry::new(bash_skill, gateway_skill));
         let ticket_tracker = Arc::new(TicketTracker::new());
@@ -213,7 +223,14 @@ impl AgentKernelService {
             ticket_tracker,
         ));
 
-        let prime_config = PrimePersonalityConfig::default();
+        // Load Prime config from file (ProClaw v2 requires XML format prompt)
+        let prompt_path = std::path::PathBuf::from("/home/eziothean/ProClaw/kernel-v2/prompts/prime.md");
+        let prime_config = PrimePersonalityConfig::with_prompt_file(
+            config.llm_model.clone(),
+            0.3,
+            4096,
+            prompt_path,
+        ).await?;
         let prime_personality = Arc::new(PrimePersonality::new(
             prime_config,
             llm_router.clone(),
@@ -228,6 +245,7 @@ impl AgentKernelService {
                 llm_router.clone(),
                 context_builder.clone(),
                 output_parser.clone(),
+                prompt_composer.clone(),
             ));
 
             let pm = Arc::new(
@@ -248,6 +266,7 @@ impl AgentKernelService {
                 coordinator.clone(),
                 block_composer.clone(),
                 llm_router.clone(),
+                prompt_loader.clone(),
             ).await?);
 
             (tm, sh)
@@ -263,6 +282,7 @@ impl AgentKernelService {
             llm_router,
             context_builder,
             output_parser,
+            prompt_composer,
             #[cfg(feature = "control-plane")]
             thread_manager,
             #[cfg(feature = "control-plane")]
@@ -409,6 +429,7 @@ impl AgentKernel for AgentKernelService {
             self.llm_router.clone(),
             self.context_builder.clone(),
             self.output_parser.clone(),
+            self.prompt_composer.clone(),
             event_tx,
         ).await {
             Ok(e) => e,

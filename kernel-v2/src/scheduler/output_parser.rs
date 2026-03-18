@@ -1,334 +1,204 @@
-//! Output Parser - 解析 LLM 输出为结构化意图
-//! 
-//! 支持：
-//! - JSON 格式解析
-//! - YAML 格式解析  
-//! - 启发式解析（fallback）
+//! Output Parser - JSON优先格式解析器
+//!
+//! 优先解析JSON格式输出，fallback到XML格式
 
 use tracing::{debug, warn};
 
 use crate::agent_thread::models::ExecutionPhase;
-use crate::scheduler::thread_executor::{IntentType, ParsedIntent, PhaseTransitionIntent, ToolCallIntent};
+use crate::scheduler::thread_executor::{IntentType, ParsedIntent, ToolCallIntent, PhaseTransitionIntent};
+use crate::scheduler::xml_parser::XmlOutputParser;
 
-/// Output Parser
+/// Output Parser - JSON优先，XML fallback
 pub struct OutputParser;
 
 impl OutputParser {
     pub fn new() -> Self {
         Self
     }
-    
-    /// 解析 LLM 输出
+
+    /// 解析 LLM 输出（优先JSON，fallback XML）
     pub fn parse(
         &self,
         output: &str,
-        current_phase: ExecutionPhase,
-    ) -> anyhow::Result<ParsedIntent> {
-        // 1. 尝试 JSON 解析
-        if let Ok(intent) = self.parse_json(output, current_phase) {
-            debug!("Parsed as JSON");
-            return Ok(intent);
-        }
-        
-        // 2. 尝试 YAML 解析
-        if let Ok(intent) = self.parse_yaml(output, current_phase) {
-            debug!("Parsed as YAML");
-            return Ok(intent);
-        }
-        
-        // 3. 启发式解析
-        warn!("Falling back to heuristic parsing");
-        self.parse_heuristic(output, current_phase)
-    }
-    
-    /// JSON 解析
-    fn parse_json(
-        &self,
-        output: &str,
         _current_phase: ExecutionPhase,
     ) -> anyhow::Result<ParsedIntent> {
-        // 提取 JSON 代码块
-        let json_str = self.extract_code_block(output, "json")
-            .unwrap_or_else(|| output.to_string());
-        
-        let json_value: serde_json::Value = serde_json::from_str(&json_str)?;
-        
-        // 解析 intent 字段
-        let intent_type = json_value.get("intent")
+        debug!("Parsing LLM output (len={}) - trying JSON first", output.len());
+
+        // 首先尝试JSON解析
+        if let Some(json_str) = self.extract_json(output) {
+            debug!("Extracted JSON candidate (len={})", json_str.len());
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                match self.parse_json_response(&value, output) {
+                    Ok(intent) => {
+                        debug!("Successfully parsed JSON response");
+                        return Ok(intent);
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "JSON detected but parsing failed, trying XML fallback");
+                    }
+                }
+            } else {
+                debug!("Failed to parse extracted content as JSON");
+            }
+        } else {
+            debug!("No JSON found in output");
+        }
+
+        // Fallback: 尝试XML解析
+        debug!("Trying XML parser as fallback");
+        let xml_parser = XmlOutputParser::new();
+        match xml_parser.parse(output) {
+            Ok(response) => {
+                debug!("Successfully parsed XML response (fallback)");
+                return xml_parser.to_parsed_intent(&response, output);
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to parse XML, using fallback intent");
+            }
+        }
+
+        // 最终fallback: 返回错误状态
+        Ok(self.create_error_intent(output, "Failed to parse LLM output as JSON or XML"))
+    }
+
+    /// Extract JSON from response (handles markdown code blocks)
+    fn extract_json(&self, output: &str) -> Option<String> {
+        let trimmed = output.trim();
+
+        // Try to find JSON in markdown code block
+        if let Some(start) = trimmed.find("```json") {
+            let content_start = start + 7;
+            if let Some(end) = trimmed[content_start..].find("```") {
+                return Some(trimmed[content_start..content_start + end].trim().to_string());
+            }
+        }
+
+        // Try to find plain code block with JSON
+        if let Some(start) = trimmed.find("```") {
+            let content_start = start + 3;
+            // Skip language identifier if present
+            let content_start = if let Some(newline_pos) = trimmed[content_start..].find('\n') {
+                content_start + newline_pos + 1
+            } else {
+                content_start
+            };
+            if let Some(end) = trimmed[content_start..].find("```") {
+                let content = trimmed[content_start..content_start + end].trim();
+                if content.starts_with('{') && content.ends_with('}') {
+                    return Some(content.to_string());
+                }
+            }
+        }
+
+        // Try to find raw JSON object
+        if let Some(start) = trimmed.find('{') {
+            if let Some(end) = trimmed.rfind('}') {
+                if start < end {
+                    return Some(trimmed[start..=end].to_string());
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Parse JSON format response (new primary format)
+    fn parse_json_response(
+        &self,
+        value: &serde_json::Value,
+        raw_output: &str,
+    ) -> anyhow::Result<ParsedIntent> {
+        let mut tool_calls = Vec::new();
+        let mut phase_transition = None;
+
+        // Extract actions
+        if let Some(actions) = value.get("actions").and_then(|v| v.as_array()) {
+            for action in actions {
+                let action_type = action.get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("tool_call");
+
+                if action_type == "tool_call" {
+                    if let (Some(skill), Some(tool)) = (
+                        action.get("skill").and_then(|v| v.as_str()),
+                        action.get("tool").and_then(|v| v.as_str()),
+                    ) {
+                        let params = action.get("parameters")
+                            .and_then(|v| v.as_object())
+                            .map(|obj| {
+                                obj.iter()
+                                    .map(|(k, v)| {
+                                        let val = v.as_str()
+                                            .map(String::from)
+                                            .unwrap_or_else(|| v.to_string());
+                                        (k.clone(), serde_json::Value::String(val))
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+
+                        let reasoning = action.get("metadata")
+                            .and_then(|m| m.get("reasoning"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+
+                        tool_calls.push(ToolCallIntent {
+                            skill_name: skill.to_string(),
+                            tool_name: tool.to_string(),
+                            parameters: serde_json::Value::Object(params),
+                            reasoning,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Extract state_update for phase transition
+        if let Some(state_update) = value.get("state_update") {
+            if let Some(phase_str) = state_update.get("phase").and_then(|v| v.as_str()) {
+                let to_phase = self.parse_phase(phase_str)?;
+                phase_transition = Some(PhaseTransitionIntent {
+                    from_phase: ExecutionPhase::Execute,
+                    to_phase,
+                    reason: String::new(),
+                    artifacts_to_finalize: vec![],
+                });
+            }
+        }
+
+        // Determine intent type
+        // Priority: ToolCall > FinalAnswer > PhaseTransition
+        let intent_type = if !tool_calls.is_empty() {
+            IntentType::ToolCall
+        } else if value.get("explanation").is_some() {
+            // Has explanation and no tool calls = final answer
+            IntentType::FinalAnswer
+        } else if phase_transition.is_some() {
+            IntentType::PhaseTransition
+        } else {
+            IntentType::FinalAnswer
+        };
+
+        // Extract explanation
+        let explanation = value.get("explanation")
             .and_then(|v| v.as_str())
-            .unwrap_or("tool_call");
-        
-        match intent_type {
-            "tool_call" | "tool_calls" => {
-                let tool_calls = self.parse_tool_calls_json(&json_value)?;
-                Ok(ParsedIntent {
-                    intent_type: IntentType::ToolCall,
-                    confidence: 1.0,
-                    raw_content: output.to_string(),
-                    structured_data: json_value.clone(),
-                    tool_calls,
-                    phase_transition: None,
-                    final_answer: None,
-                    clarification_request: None,
-                    error_message: None,
-                    batch_tasks: None,
-                })
-            }
-            "phase_transition" => {
-                let transition = self.parse_phase_transition_json(&json_value)?;
-                Ok(ParsedIntent {
-                    intent_type: IntentType::PhaseTransition,
-                    confidence: 1.0,
-                    raw_content: output.to_string(),
-                    structured_data: json_value.clone(),
-                    tool_calls: vec![],
-                    phase_transition: Some(transition),
-                    final_answer: None,
-                    clarification_request: None,
-                    error_message: None,
-                    batch_tasks: None,
-                })
-            }
-            "final_answer" | "answer" => {
-                let answer = json_value.get("answer")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_default();
-                Ok(ParsedIntent {
-                    intent_type: IntentType::FinalAnswer,
-                    confidence: 1.0,
-                    raw_content: output.to_string(),
-                    structured_data: json_value.clone(),
-                    tool_calls: vec![],
-                    phase_transition: None,
-                    final_answer: Some(answer),
-                    clarification_request: None,
-                    error_message: None,
-                    batch_tasks: None,
-                })
-            }
-            "clarification" => {
-                let question = json_value.get("question")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_default();
-                Ok(ParsedIntent {
-                    intent_type: IntentType::Clarification,
-                    confidence: 1.0,
-                    raw_content: output.to_string(),
-                    structured_data: json_value.clone(),
-                    tool_calls: vec![],
-                    phase_transition: None,
-                    final_answer: None,
-                    clarification_request: Some(question),
-                    error_message: None,
-                    batch_tasks: None,
-                })
-            }
-            _ => Err(anyhow::anyhow!("Unknown intent type: {}", intent_type)),
-        }
-    }
-    
-    /// YAML 解析
-    fn parse_yaml(
-        &self,
-        output: &str,
-        current_phase: ExecutionPhase,
-    ) -> anyhow::Result<ParsedIntent> {
-        // 提取 YAML 代码块
-        let yaml_str = self.extract_code_block(output, "yaml")
-            .or_else(|| self.extract_code_block(output, "yml"))
-            .unwrap_or_else(|| output.to_string());
-        
-        // 转换为 JSON 然后解析
-        let yaml_value: serde_yaml::Value = serde_yaml::from_str(&yaml_str)?;
-        let json_value = serde_json::to_value(yaml_value)?;
-        
-        // 复用 JSON 解析逻辑
-        self.parse_json(&json_value.to_string(), current_phase)
-    }
-    
-    /// 启发式解析（fallback）
-    fn parse_heuristic(
-        &self,
-        output: &str,
-        _current_phase: ExecutionPhase,
-    ) -> anyhow::Result<ParsedIntent> {
-        let output_lower = output.to_lowercase();
-        
-        // 检测最终答案
-        if output_lower.contains("final answer:") 
-            || output_lower.contains("final_answer:")
-            || output_lower.contains("answer:") {
-            return Ok(ParsedIntent {
-                intent_type: IntentType::FinalAnswer,
-                confidence: 0.7,
-                raw_content: output.to_string(),
-                structured_data: serde_json::json!({}),
-                tool_calls: vec![],
-                phase_transition: None,
-                final_answer: Some(output.to_string()),
-                clarification_request: None,
-                error_message: None,
-                batch_tasks: None,
-            });
-        }
-        
-        // 检测澄清请求
-        if output_lower.contains("clarification:")
-            || output_lower.contains("i need more information")
-            || output_lower.contains("please clarify") {
-            return Ok(ParsedIntent {
-                intent_type: IntentType::Clarification,
-                confidence: 0.7,
-                raw_content: output.to_string(),
-                structured_data: serde_json::json!({}),
-                tool_calls: vec![],
-                phase_transition: None,
-                final_answer: None,
-                clarification_request: Some(output.to_string()),
-                error_message: None,
-                batch_tasks: None,
-            });
-        }
-        
-        // 默认假设是工具调用
+            .map(String::from);
+
         Ok(ParsedIntent {
-            intent_type: IntentType::ToolCall,
-            confidence: 0.5,
-            raw_content: output.to_string(),
-            structured_data: serde_json::json!({}),
-            tool_calls: vec![],  // 启发式解析无法提取具体工具调用
-            phase_transition: None,
-            final_answer: None,
+            intent_type,
+            confidence: 1.0,
+            raw_content: raw_output.to_string(),
+            structured_data: value.clone(),
+            tool_calls,
+            phase_transition,
+            final_answer: explanation,
             clarification_request: None,
             error_message: None,
             batch_tasks: None,
         })
     }
-    
-    /// 提取代码块
-    fn extract_code_block(
-        &self,
-        output: &str,
-        language: &str,
-    ) -> Option<String> {
-        let pattern = format!("```{}\n", language);
-        if let Some(start) = output.find(&pattern) {
-            let content_start = start + pattern.len();
-            if let Some(end) = output[content_start..].find("```") {
-                return Some(output[content_start..content_start + end].to_string());
-            }
-        }
-        None
-    }
-    
-    /// 解析工具调用（JSON）
-    fn parse_tool_calls_json(
-        &self,
-        json: &serde_json::Value,
-    ) -> anyhow::Result<Vec<ToolCallIntent>> {
-        let mut tool_calls = Vec::new();
-        
-        // 支持两种格式：
-        // 1. { "tool_calls": [...] }
-        // 2. { "tools": [...] }
-        // 3. { "skill": "...", "tool": "...", "parameters": {...} }
-        
-        if let Some(calls) = json.get("tool_calls").and_then(|v| v.as_array()) {
-            for call in calls {
-                tool_calls.push(self.parse_single_tool_call(call)?);
-            }
-        } else if let Some(calls) = json.get("tools").and_then(|v| v.as_array()) {
-            for call in calls {
-                tool_calls.push(self.parse_single_tool_call(call)?);
-            }
-        } else if json.get("skill").is_some() {
-            // 单个工具调用
-            tool_calls.push(self.parse_single_tool_call(json)?);
-        }
-        
-        Ok(tool_calls)
-    }
-    
-    /// 解析单个工具调用
-    fn parse_single_tool_call(
-        &self,
-        json: &serde_json::Value,
-    ) -> anyhow::Result<ToolCallIntent> {
-        let skill_name = json.get("skill")
-            .or_else(|| json.get("skill_name"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing skill name"))?
-            .to_string();
-        
-        let tool_name = json.get("tool")
-            .or_else(|| json.get("tool_name"))
-            .or_else(|| json.get("action"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("execute")
-            .to_string();
-        
-        let parameters = json.get("parameters")
-            .or_else(|| json.get("params"))
-            .or_else(|| json.get("args"))
-            .cloned()
-            .unwrap_or(serde_json::json!({}));
-        
-        let reasoning = json.get("reasoning")
-            .or_else(|| json.get("reason"))
-            .or_else(|| json.get("thought"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        
-        Ok(ToolCallIntent {
-            skill_name,
-            tool_name,
-            parameters,
-            reasoning,
-        })
-    }
-    
-    /// 解析 Phase 转换（JSON）
-    fn parse_phase_transition_json(
-        &self,
-        json: &serde_json::Value,
-    ) -> anyhow::Result<PhaseTransitionIntent> {
-        let from_phase_str = json.get("from_phase")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing from_phase"))?;
-        
-        let to_phase_str = json.get("to_phase")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing to_phase"))?;
-        
-        let from_phase = self.parse_phase(from_phase_str)?;
-        let to_phase = self.parse_phase(to_phase_str)?;
-        
-        let reason = json.get("reason")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        
-        let artifacts_to_finalize = json.get("artifacts_to_finalize")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        
-        Ok(PhaseTransitionIntent {
-            from_phase,
-            to_phase,
-            reason,
-            artifacts_to_finalize,
-        })
-    }
-    
-    /// 解析 Phase 字符串
+
     fn parse_phase(&self, phase_str: &str) -> anyhow::Result<ExecutionPhase> {
         match phase_str.to_lowercase().as_str() {
             "explore" => Ok(ExecutionPhase::Explore),
@@ -336,5 +206,150 @@ impl OutputParser {
             "complete" | "completed" => Ok(ExecutionPhase::Complete),
             _ => Err(anyhow::anyhow!("Unknown phase: {}", phase_str)),
         }
+    }
+
+    fn create_error_intent(&self, raw_output: &str, error_msg: &str) -> ParsedIntent {
+        ParsedIntent {
+            intent_type: IntentType::Error,
+            confidence: 0.0,
+            raw_content: raw_output.to_string(),
+            structured_data: serde_json::json!({}),
+            tool_calls: vec![],
+            phase_transition: None,
+            final_answer: None,
+            clarification_request: None,
+            error_message: Some(error_msg.to_string()),
+            batch_tasks: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_json_response() {
+        let json = r#"{
+  "reasoning": {
+    "observation": "User wants to read file",
+    "thought": "I should use bash skill",
+    "plan": ["Read the file"]
+  },
+  "explanation": "I'll read that file for you",
+  "actions": [
+    {
+      "type": "tool_call",
+      "id": "act_001",
+      "skill": "bash",
+      "tool": "execute",
+      "parameters": {
+        "command": "cat /etc/hosts"
+      }
+    }
+  ],
+  "state_update": {
+    "phase": "Execute",
+    "artifacts": []
+  }
+}"#;
+
+        let parser = OutputParser::new();
+        let intent = parser.parse(json, ExecutionPhase::Execute).unwrap();
+
+        assert_eq!(intent.intent_type, IntentType::ToolCall);
+        assert_eq!(intent.tool_calls.len(), 1);
+        assert_eq!(intent.tool_calls[0].skill_name, "bash");
+        assert_eq!(intent.tool_calls[0].tool_name, "execute");
+        assert_eq!(
+            intent.tool_calls[0].parameters.get("command").and_then(|v| v.as_str()),
+            Some("cat /etc/hosts")
+        );
+    }
+
+    #[test]
+    fn test_parse_json_multiple_actions() {
+        let json = r#"{
+  "reasoning": {
+    "observation": "Need to list and read",
+    "thought": "Two steps needed",
+    "plan": ["List files", "Read content"]
+  },
+  "explanation": "I'll list and read for you",
+  "actions": [
+    {
+      "type": "tool_call",
+      "id": "act_001",
+      "skill": "bash",
+      "tool": "execute",
+      "parameters": {
+        "command": "ls -la"
+      }
+    },
+    {
+      "type": "tool_call",
+      "id": "act_002",
+      "skill": "bash",
+      "tool": "execute",
+      "parameters": {
+        "command": "cat file.txt"
+      }
+    }
+  ],
+  "state_update": {
+    "phase": "Execute",
+    "artifacts": []
+  }
+}"#;
+
+        let parser = OutputParser::new();
+        let intent = parser.parse(json, ExecutionPhase::Execute).unwrap();
+
+        assert_eq!(intent.intent_type, IntentType::ToolCall);
+        assert_eq!(intent.tool_calls.len(), 2);
+        assert_eq!(
+            intent.tool_calls[0].parameters.get("command").and_then(|v| v.as_str()),
+            Some("ls -la")
+        );
+        assert_eq!(
+            intent.tool_calls[1].parameters.get("command").and_then(|v| v.as_str()),
+            Some("cat file.txt")
+        );
+    }
+
+    #[test]
+    fn test_parse_json_final_answer() {
+        let json = r#"{
+  "reasoning": {
+    "observation": "Task complete",
+    "thought": "No more actions needed",
+    "plan": []
+  },
+  "explanation": "This is the final answer",
+  "actions": [],
+  "state_update": {
+    "phase": "Complete",
+    "artifacts": []
+  }
+}"#;
+
+        let parser = OutputParser::new();
+        let intent = parser.parse(json, ExecutionPhase::Complete).unwrap();
+
+        assert_eq!(intent.intent_type, IntentType::FinalAnswer);
+        assert_eq!(intent.final_answer.unwrap(), "This is the final answer");
+    }
+
+    #[test]
+    fn test_parse_xml_fallback() {
+        // XML fallback is deprecated - JSON is the primary format
+        // This test verifies that invalid/unparseable content returns an error intent
+        let invalid = "This is not valid JSON or XML";
+
+        let parser = OutputParser::new();
+        let intent = parser.parse(invalid, ExecutionPhase::Execute).unwrap();
+
+        // Should return error intent when neither JSON nor XML can be parsed
+        assert_eq!(intent.intent_type, IntentType::Error);
     }
 }

@@ -1,0 +1,49 @@
+name: prime
+description: "Prime Personality System Prompt - Orchestrator that transforms user intentions into executable plans with static/dynamic context separation"
+version: "2.0"
+
+# 静态部分（可被 LLM provider 缓存）
+static_sections:
+  - id: identity
+    asset: "identity/prime_identity.md"
+    required: true
+
+  - id: capabilities
+    asset: "capabilities/available_tools.md"
+    required: true
+
+  - id: schema
+    asset: "schemas/prime_schema.md"
+    required: true
+
+  - id: rules
+    asset: "rules/prime_rules.md"
+    required: true
+
+  - id: examples
+    asset: "examples/prime_examples.md"
+    required: true
+
+  - id: reminder
+    template: |
+      ## Remember
+
+      - Output **ONLY JSON**, nothing else
+      - **Every** file/command request needs a **process**
+      - Be **specific** with paths and commands
+      - System will fail if you output conversation instead of JSON
+    required: true
+
+# 动态上下文注入点（Prime 通常不需要太多动态上下文）
+context_slots:
+  # 任务目标
+  - preset: task_goal
+    position: after_static
+    config:
+      include_constraints: true
+
+# 输出结构配置
+output_structure:
+  format: "markdown"
+  separator: "\n\n---\n\n"
+  context_boundary: true

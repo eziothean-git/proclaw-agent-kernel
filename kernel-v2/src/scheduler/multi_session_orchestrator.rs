@@ -19,6 +19,7 @@ use crate::scheduler::{
     output_parser::OutputParser,
     thread_executor::{CompletionReason, ExecutorEvent, ThreadExecutor},
 };
+use crate::config::PromptComposer;
 
 /// 子任务定义
 #[derive(Debug, Clone)]
@@ -68,6 +69,7 @@ pub struct MultiSessionOrchestrator {
     llm_router: Arc<LLMRouter>,
     context_builder: Arc<ContextBuilder>,
     output_parser: Arc<OutputParser>,
+    prompt_composer: Arc<PromptComposer>,
 }
 
 impl MultiSessionOrchestrator {
@@ -77,6 +79,7 @@ impl MultiSessionOrchestrator {
         llm_router: Arc<LLMRouter>,
         context_builder: Arc<ContextBuilder>,
         output_parser: Arc<OutputParser>,
+        prompt_composer: Arc<PromptComposer>,
     ) -> Self {
         Self {
             base_path,
@@ -84,6 +87,7 @@ impl MultiSessionOrchestrator {
             llm_router,
             context_builder,
             output_parser,
+            prompt_composer,
         }
     }
 
@@ -112,6 +116,7 @@ impl MultiSessionOrchestrator {
             let llm_router = self.llm_router.clone();
             let context_builder = self.context_builder.clone();
             let output_parser = self.output_parser.clone();
+            let prompt_composer = self.prompt_composer.clone();
             let parent_session_id = parent_session_id.clone();
 
             let handle = tokio::spawn(async move {
@@ -133,6 +138,7 @@ impl MultiSessionOrchestrator {
                     llm_router,
                     context_builder,
                     output_parser,
+                    prompt_composer,
                 )
                 .await;
 
@@ -201,6 +207,7 @@ impl MultiSessionOrchestrator {
         llm_router: Arc<LLMRouter>,
         context_builder: Arc<ContextBuilder>,
         output_parser: Arc<OutputParser>,
+        prompt_composer: Arc<PromptComposer>,
     ) -> anyhow::Result<(Vec<ArtifactSlot>, Option<String>)> {
         // 创建 ThreadStorage
         let immutable_input = ImmutableInput {
@@ -238,6 +245,7 @@ impl MultiSessionOrchestrator {
             llm_router,
             context_builder,
             output_parser,
+            prompt_composer,
             event_tx,
         )
         .await?;

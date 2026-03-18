@@ -23,6 +23,7 @@ use crate::scheduler::{
     output_parser::OutputParser,
     thread_executor::{ThreadExecutor, ExecutorState, ExecutorEvent, CompletionReason},
 };
+use crate::config::PromptComposer;
 
 /// Thread 运行时信息
 #[derive(Debug, Clone)]
@@ -38,22 +39,23 @@ pub struct ThreadInfo {
 }
 
 /// Thread 管理器
-/// 
+///
 /// SAFETY: ThreadManager is Send + Sync because all its fields are Send + Sync
 pub struct ThreadManager {
     // Thread 存储根目录
     base_path: PathBuf,
-    
+
     // 基础设施
     coordinator: Arc<ExecutionCoordinator>,
     llm_router: Arc<LLMRouter>,
     context_builder: Arc<ContextBuilder>,
     output_parser: Arc<OutputParser>,
-    
+    prompt_composer: Arc<PromptComposer>,
+
     // 运行中的 Executor
     // thread_id -> (executor_state, event_sender, abort_handle)
     executors: Arc<DashMap<ThreadId, ExecutorHandle>>,
-    
+
     // Thread 历史记录
     thread_history: Arc<RwLock<HashMap<ThreadId, ThreadHistory>>>,
 }
@@ -93,6 +95,7 @@ impl ThreadManager {
         llm_router: Arc<LLMRouter>,
         context_builder: Arc<ContextBuilder>,
         output_parser: Arc<OutputParser>,
+        prompt_composer: Arc<PromptComposer>,
     ) -> Self {
         Self {
             base_path,
@@ -100,6 +103,7 @@ impl ThreadManager {
             llm_router,
             context_builder,
             output_parser,
+            prompt_composer,
             executors: Arc::new(DashMap::new()),
             thread_history: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -171,6 +175,7 @@ impl ThreadManager {
             self.llm_router.clone(),
             self.context_builder.clone(),
             self.output_parser.clone(),
+            self.prompt_composer.clone(),
             event_tx.clone(),
         ).await?;
         

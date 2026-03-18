@@ -24,6 +24,7 @@ use crate::scheduler::{
 use crate::llm::config::DifficultyLevel;
 use crate::coordinator::ExecutionCoordinator;
 use crate::block_composer::BlockComposerEngine;
+use crate::config::PromptLoader;
 use crate::llm::LLMRouter;
 
 /// 执行结果
@@ -69,6 +70,7 @@ impl IRProcessExecutor {
         coordinator: Arc<ExecutionCoordinator>,
         block_composer: Arc<BlockComposerEngine>,
         llm_router: Arc<LLMRouter>,
+        prompt_loader: Arc<PromptLoader>,
     ) -> anyhow::Result<Self> {
         let session_host_skills = Arc::new(
             SessionHostSkills::new(
@@ -76,6 +78,7 @@ impl IRProcessExecutor {
                 coordinator,
                 block_composer,
                 llm_router,
+                prompt_loader,
             ).await?
         );
 

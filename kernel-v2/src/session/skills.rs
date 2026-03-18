@@ -18,6 +18,7 @@ use crate::agent_thread::{
     storage::ThreadStorage,
 };
 use crate::block_composer::BlockComposerEngine;
+use crate::config::{PromptLoader, PromptComposer};
 use crate::coordinator::ExecutionCoordinator;
 use crate::llm::{
     LLMRouter,
@@ -36,6 +37,7 @@ pub struct SessionHostSkills {
     llm_router: Arc<LLMRouter>,
     context_builder: Arc<ContextBuilder>,
     output_parser: Arc<OutputParser>,
+    prompt_composer: Arc<PromptComposer>,
     block_composer: Arc<BlockComposerEngine>,
     executors: Arc<RwLock<std::collections::HashMap<String, ExecutorHandle>>>,
 }
@@ -56,18 +58,25 @@ impl SessionHostSkills {
         coordinator: Arc<ExecutionCoordinator>,
         block_composer: Arc<BlockComposerEngine>,
         llm_router: Arc<LLMRouter>,
+        prompt_loader: Arc<PromptLoader>,
     ) -> anyhow::Result<Self> {
         // 创建 Process Manager
         let process_manager = Arc::new(RwLock::new(
             ProcessManager::new(&data_path).await?
         ));
-        
+
         // 创建 Context Builder
-        let context_builder = Arc::new(ContextBuilder::new(block_composer.clone()));
-        
+        let context_builder = Arc::new(ContextBuilder::new(block_composer.clone(), prompt_loader));
+
         // 创建 Output Parser
         let output_parser = Arc::new(OutputParser::new());
-        
+
+        // 创建 PromptComposer（用于静态/动态分离的 prompt 组装）
+        let assets_dir = std::path::PathBuf::from("/home/eziothean/ProClaw/kernel-v2/prompts/assets");
+        let compositions_dir = std::path::PathBuf::from("/home/eziothean/ProClaw/kernel-v2/prompts/compositions");
+        let prompt_composer = Arc::new(PromptComposer::new(assets_dir, compositions_dir));
+        prompt_composer.load_all().await?;
+
         Ok(Self {
             data_path,
             process_manager,
@@ -75,6 +84,7 @@ impl SessionHostSkills {
             llm_router,
             context_builder,
             output_parser,
+            prompt_composer,
             block_composer,
             executors: Arc::new(RwLock::new(std::collections::HashMap::new())),
         })
@@ -298,6 +308,7 @@ impl SessionHostSkills {
             self.llm_router.clone(),
             self.context_builder.clone(),
             self.output_parser.clone(),
+            self.prompt_composer.clone(),
             event_tx.clone(),
         ).await?;
         

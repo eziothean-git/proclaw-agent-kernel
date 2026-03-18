@@ -22,7 +22,8 @@ pub mod xml_parser;
 #[cfg(feature = "control-plane")]
 pub mod thread_manager;
 
-pub use context_builder::{ContextBuilder, WorkingSet};
+pub use context_builder::ContextBuilder;
+pub use thread_executor::WorkingSet;
 pub use multi_session_orchestrator::{
     MultiSessionOrchestrator, ParallelConfig, MultiSessionResult, SubTask,
     convert_processes_to_sub_tasks,

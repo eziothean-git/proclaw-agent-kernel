@@ -1,10 +1,16 @@
 //! Thread Executor - 执行 SEE-ACT-UPDATE 循环的程序
-//! 
+//!
 //! 职责：
 //! 1. 从 Agent Thread 文件加载历史
 //! 2. 执行 SEE-ACT-UPDATE 循环
 //! 3. 更新 Agent Thread 文件
 //! 4. 向 Session Host 报告事件
+//!
+//! # SEE-ACT-UPDATE Context Injection
+//!
+//! 使用静态/动态分离的 prompt 组装：
+//! - 静态部分由 LLM provider 缓存（prefix caching）
+//! - 动态上下文通过 context_slots 配置注入
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,8 +27,9 @@ use crate::coordinator::{
 };
 use crate::auth::CapabilityLevel;
 use crate::llm::{LLMRouter, config::DifficultyLevel};
-use crate::scheduler::context_builder::{ContextBuilder, WorkingSet};
+use crate::scheduler::context_builder::ContextBuilder;
 use crate::scheduler::output_parser::OutputParser;
+use crate::config::{PromptComposer, CacheHint};
 
 /// Thread Executor 状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,18 +45,19 @@ pub enum ExecutorState {
 pub struct ThreadExecutor {
     executor_id: ExecutorId,
     storage: ThreadStorage,
-    
+
     // 基础设施
     coordinator: Arc<ExecutionCoordinator>,
-    llm_router: Arc<LLMRouter>,  // 使用 LLM Router 替代直接 Client
+    llm_router: Arc<LLMRouter>,
     context_builder: Arc<ContextBuilder>,
     output_parser: Arc<OutputParser>,
-    
+    prompt_composer: Arc<PromptComposer>,
+
     // 状态
     state: ExecutorState,
     current_step: usize,
     max_steps: usize,
-    
+
     // 事件通道（向 Session Host 报告）
     event_tx: mpsc::Sender<ExecutorEvent>,
 }
@@ -118,18 +126,19 @@ impl ThreadExecutor {
         llm_router: Arc<LLMRouter>,
         context_builder: Arc<ContextBuilder>,
         output_parser: Arc<OutputParser>,
+        prompt_composer: Arc<PromptComposer>,
         event_tx: mpsc::Sender<ExecutorEvent>,
     ) -> anyhow::Result<Self> {
         let storage = ThreadStorage::load(base_path, &thread_id).await?;
-        
+
         let executor_id = ExecutorId::new();
-        
+
         info!(
             executor_id = %executor_id.0,
             thread_id = %thread_id.0,
             "Created ThreadExecutor"
         );
-        
+
         Ok(Self {
             executor_id,
             storage,
@@ -137,6 +146,7 @@ impl ThreadExecutor {
             llm_router,
             context_builder,
             output_parser,
+            prompt_composer,
             state: ExecutorState::Initializing,
             current_step: 0,
             max_steps: 100,
@@ -398,12 +408,38 @@ impl ThreadExecutor {
         
         Ok(true)
     }
-    
-    /// 构建 Working Set
-    async fn build_working_set(&self,
-    ) -> anyhow::Result<WorkingSet> {
-        // 使用 ContextBuilder 构建
-        self.context_builder.build(&self.storage, self.current_step).await
+
+    /// 构建 Working Set（使用静态/动态分离的 prompt 组装）
+    async fn build_working_set(&self) -> anyhow::Result<WorkingSet> {
+        // 1. 获取执行上下文
+        let context = self.context_builder.build_context(&self.storage, self.current_step).await?;
+
+        // 2. 使用 PromptComposer 组装 prompt（静态 + 动态）
+        let composed = self.prompt_composer
+            .compose_with_context("thread", &context)
+            .await?;
+
+        // 3. 生成完整 prompt
+        let full_prompt = composed.to_full_prompt();
+
+        // 4. 解析 phase
+        let current_phase = match context.current_phase.as_str() {
+            "Explore" => ExecutionPhase::Explore,
+            "Execute" => ExecutionPhase::Execute,
+            "Complete" => ExecutionPhase::Complete,
+            _ => ExecutionPhase::Explore,
+        };
+
+        // 5. 构建 WorkingSet
+        Ok(WorkingSet {
+            task_id: self.storage.thread_id().0.clone(),
+            task_goal: context.task_goal,
+            current_phase,
+            step_number: self.current_step,
+            composed_text: full_prompt,
+            token_estimate: composed.cache_hint.static_token_count,
+            cache_hint: Some(composed.cache_hint),
+        })
     }
     
     /// 解析 LLM 输出
@@ -554,4 +590,34 @@ pub struct PhaseTransitionIntent {
     pub to_phase: ExecutionPhase,
     pub reason: String,
     pub artifacts_to_finalize: Vec<String>,
+}
+
+/// Working Set - 合成的上下文（支持静态/动态分离）
+#[derive(Debug, Clone)]
+pub struct WorkingSet {
+    pub task_id: String,
+    pub task_goal: String,
+    pub current_phase: ExecutionPhase,
+    pub step_number: usize,
+    pub composed_text: String,
+    pub token_estimate: usize,
+    /// 缓存提示（用于支持 prompt caching 的 API）
+    pub cache_hint: Option<CacheHint>,
+}
+
+impl WorkingSet {
+    /// 转换为 Prompt 文本
+    pub fn to_prompt(&self) -> String {
+        self.composed_text.clone()
+    }
+
+    /// 检查是否可缓存
+    pub fn is_cacheable(&self) -> bool {
+        self.cache_hint.as_ref().map(|h| h.cacheable).unwrap_or(false)
+    }
+
+    /// 获取静态部分 token 数量
+    pub fn static_token_count(&self) -> usize {
+        self.cache_hint.as_ref().map(|h| h.static_token_count).unwrap_or(self.token_estimate)
+    }
 }
